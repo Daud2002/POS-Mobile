@@ -16,6 +16,7 @@ import { View } from 'react-native';
 
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
+import { effectiveRoleOf } from '@/lib/roles';
 import { Screen } from '@/components/layout/Screen';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
@@ -99,12 +100,59 @@ const STORE_OWNER_MENU: Array<{ title: string; items: MenuEntry[] }> = [
 /** Cashiers get only Settings here — their tab bar already covers POS and Orders. */
 const CASHIER_MENU: typeof STORE_OWNER_MENU = [];
 
+/**
+ * Restaurant owner. Deliberately omits Inventory — restaurant accounts do not
+ * track stock — and reuses the shared Products/Categories/Employees screens,
+ * which are already store-scoped.
+ */
+const RESTAURANT_OWNER_MENU: typeof STORE_OWNER_MENU = [
+  {
+    title: 'Menu',
+    items: [
+      {
+        route: 'Products',
+        label: 'Dishes',
+        description: 'Names, prices and cost for profit',
+        icon: ShoppingBag,
+        tone: 'primary',
+      },
+      {
+        route: 'Categories',
+        label: 'Categories',
+        description: 'Group dishes for the order screen',
+        icon: FolderTree,
+        tone: 'accent',
+      },
+    ],
+  },
+  {
+    title: 'People',
+    items: [
+      {
+        route: 'Employees',
+        label: 'Staff',
+        description: 'Waiters, kitchen and cashiers',
+        icon: UserSquare,
+        tone: 'accent',
+      },
+    ],
+  },
+];
+
 export function MoreScreen() {
   const theme = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user } = useAuth();
 
-  const groups = user?.role === 'store_owner' ? STORE_OWNER_MENU : CASHIER_MENU;
+  // Branch on the derived role: a restaurant owner is also role 'store_owner',
+  // so `role` alone cannot tell the two menus apart.
+  const role = effectiveRoleOf(user);
+  const groups =
+    role === 'restaurant_owner'
+      ? RESTAURANT_OWNER_MENU
+      : role === 'store_owner'
+        ? STORE_OWNER_MENU
+        : CASHIER_MENU;
 
   return (
     <Screen scrollable edges={['top', 'bottom']}>

@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Gradient } from '@/components/ui/Gradient';
+import { Logo } from '@/components/ui/Logo';
 import { Text } from '@/components/ui/Text';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -40,13 +41,9 @@ export function BrandHeader() {
       <View style={[styles.blob, styles.blobPrimary]} />
       <View style={[styles.blob, styles.blobAccent]} />
 
+      {/* Plated: the mark is dark navy and would vanish on this dark hero. */}
       <View style={[{ borderRadius: theme.radius.xl }, theme.shadows.glow]}>
-        <Gradient
-          variant="primary"
-          style={[styles.logo, { borderRadius: theme.radius.xl }]}
-        >
-          <Receipt size={32} color="#FFFFFF" />
-        </Gradient>
+        <Logo size={52} plated />
       </View>
 
       <Text
@@ -100,12 +97,6 @@ const styles = StyleSheet.create({
     bottom: -100,
     right: -60,
     backgroundColor: '#6D54D426',
-  },
-  logo: {
-    width: 68,
-    height: 68,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   features: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
   pill: {

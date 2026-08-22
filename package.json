@@ -36,6 +36,7 @@
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
     "react-native-web": "^0.21.2",
+    "socket.io-client": "^4.8.3",
     "zod": "^4.4.3",
     "zustand": "^5.0.15"
   },
@@ -55,7 +56,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
-    "prebuild": "expo prebuild --clean"
+    "prebuild": "expo prebuild --clean",
+    "icons": "node scripts/generate-icons.js"
   },
   "private": true
 }

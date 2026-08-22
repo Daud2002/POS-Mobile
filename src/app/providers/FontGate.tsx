@@ -14,6 +14,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { ReactNode, useCallback, useEffect } from 'react';
 import { View } from 'react-native';
 
+import { SPLASH_BACKGROUND } from './AnimatedSplash';
+
 // Keep the splash up until the fonts are ready, so no frame renders in the
 // system font and then reflows.
 void SplashScreen.preventAutoHideAsync();
@@ -43,7 +45,9 @@ export function FontGate({ children }: { children: ReactNode }) {
   }, [loaded, error, hideSplash]);
 
   if (!loaded && !error) {
-    return <View style={{ flex: 1, backgroundColor: '#0F172A' }} />;
+    // Same colour as the native splash and AnimatedSplash, so the hand-off
+    // between the three is invisible.
+    return <View style={{ flex: 1, backgroundColor: SPLASH_BACKGROUND }} />;
   }
 
   return <>{children}</>;

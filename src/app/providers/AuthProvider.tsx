@@ -34,8 +34,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await apiClient.clearToken();
   }, []);
 
-  // A 401 from any request means the session is dead. The web app has no
-  // equivalent — an expired token there just produces a generic error toast.
+  // Fires only once a refresh has already failed — the client renews and
+  // replays an expired access token before ever reaching this, so a routine
+  // 401 no longer drops the user back to Login mid-shift.
   useEffect(() => {
     apiClient.setUnauthorizedHandler(() => {
       void clearSession();
@@ -78,8 +79,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     try {
-      const { accessToken, user: loggedIn } = await authApi.login(email, password);
+      const { accessToken, refreshToken, user: loggedIn } = await authApi.login(email, password);
       await apiClient.setToken(accessToken);
+      // Without persisting this the session would end when the 30-minute
+      // access token lapses, rather than lasting the full 7 days.
+      if (refreshToken) await apiClient.setRefreshToken(refreshToken);
       // The login response already carries storeId/currency/printerConfig, so
       // no second /auth/me call is needed here.
       setUser(loggedIn);
@@ -98,7 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    // There is no server-side logout endpoint; clearing the token is enough.
+    // Revoke server-side first so the refresh token cannot outlive the
+    // session, then clear locally regardless of whether that call succeeded.
+    await authApi.logout();
     await clearSession();
   }, [clearSession]);
 

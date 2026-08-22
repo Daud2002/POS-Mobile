@@ -17,6 +17,23 @@ export const authApi = {
   },
 
   /**
+   * Revokes the refresh token and every token rotated from it.
+   *
+   * Anonymous because the access token may already have expired — the refresh
+   * token in the body is what identifies the session. Never throws: signing
+   * out locally must not depend on reaching the server.
+   */
+  async logout(): Promise<void> {
+    const refreshToken = apiClient.getRefreshToken();
+    if (!refreshToken) return;
+    try {
+      await apiClient.post<void>('/auth/logout', { refreshToken }, { anonymous: true });
+    } catch {
+      // Offline sign-out is still a sign-out.
+    }
+  },
+
+  /**
    * POST /auth/change-password — added to the backend as part of this work; it
    * did not exist before (see plan Part 8).
    */

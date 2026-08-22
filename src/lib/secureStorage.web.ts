@@ -1,4 +1,5 @@
 const AUTH_TOKEN_KEY = 'tapntrade_auth_token';
+const REFRESH_TOKEN_KEY = 'tapntrade_refresh_token';
 
 /**
  * Web implementation of token storage.
@@ -34,6 +35,32 @@ export const secureStorage = {
   async clearToken(): Promise<void> {
     try {
       globalThis.localStorage?.removeItem(AUTH_TOKEN_KEY);
+    } catch {
+      // Already gone.
+    }
+  },
+
+  // Must mirror secureStorage.ts — Metro picks this file on web, so a missing
+  // method here surfaces as a runtime crash only in the browser preview.
+  async getRefreshToken(): Promise<string | null> {
+    try {
+      return globalThis.localStorage?.getItem(REFRESH_TOKEN_KEY) ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async setRefreshToken(token: string): Promise<void> {
+    try {
+      globalThis.localStorage?.setItem(REFRESH_TOKEN_KEY, token);
+    } catch {
+      // Non-fatal, as above.
+    }
+  },
+
+  async clearRefreshToken(): Promise<void> {
+    try {
+      globalThis.localStorage?.removeItem(REFRESH_TOKEN_KEY);
     } catch {
       // Already gone.
     }

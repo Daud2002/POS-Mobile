@@ -23,4 +23,10 @@ export const queryKeys = {
   employees: (storeId: string) => ['employees', storeId] as const,
 
   store: (id: string) => ['store', id] as const,
+
+  // Restaurant. Socket events invalidate these rather than refetching blindly.
+  restaurantTables: () => ['restaurant', 'tables'] as const,
+  restaurantOrders: (filter?: string) => ['restaurant', 'orders', filter ?? 'all'] as const,
+  restaurantOrder: (id: string) => ['restaurant', 'order', id] as const,
+  restaurantReport: (range: string) => ['restaurant', 'report', range] as const,
 } as const;

@@ -14,6 +14,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
+import { effectiveRoleOf } from '@/lib/roles';
 import { Screen } from '@/components/layout/Screen';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Avatar } from '@/components/ui/Avatar';
@@ -49,6 +50,8 @@ export function SettingsScreen() {
   const { user, logout } = useAuth();
   const { mode, setMode } = useThemeMode();
   const printer = usePrinterStore((state) => state.profile);
+  // Everyone except a restaurant waiter has a reason to bind a printer.
+  const canPrint = effectiveRoleOf(user) !== 'waiter';
 
   const [confirmLogout, setConfirmLogout] = useState(false);
 
@@ -102,25 +105,32 @@ export function SettingsScreen() {
         </Card>
       </View>
 
-      <View style={{ gap: theme.spacing.md }}>
-        <Text variant="overline" color="mutedForeground">
-          Receipt printing
-        </Text>
+      {/*
+        Waiters never print: tickets come out at the kitchen station and
+        receipts at the till, so a printer they can pair would only cause
+        orders to print in the wrong place.
+      */}
+      {canPrint && (
+        <View style={{ gap: theme.spacing.md }}>
+          <Text variant="overline" color="mutedForeground">
+            Receipt printing
+          </Text>
 
-        <Card padding="none">
-          <SettingsRow
-            icon={<Printer size={18} color={theme.colors.primary} />}
-            label="Printer Setup"
-            description={
-              printer.device
-                ? `${printer.device.name} · ${printer.paperWidth}mm`
-                : 'No printer connected'
-            }
-            onPress={() => navigation.navigate('PrinterSetup')}
-            trailing={<ChevronRight size={18} color={theme.colors.mutedForeground} />}
-          />
-        </Card>
-      </View>
+          <Card padding="none">
+            <SettingsRow
+              icon={<Printer size={18} color={theme.colors.primary} />}
+              label="Printer Setup"
+              description={
+                printer.device
+                  ? `${printer.device.name} · ${printer.paperWidth}mm`
+                  : 'No printer connected'
+              }
+              onPress={() => navigation.navigate('PrinterSetup')}
+              trailing={<ChevronRight size={18} color={theme.colors.mutedForeground} />}
+            />
+          </Card>
+        </View>
+      )}
 
       <View style={{ gap: theme.spacing.md }}>
         <Text variant="overline" color="mutedForeground">

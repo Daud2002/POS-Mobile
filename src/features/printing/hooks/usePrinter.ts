@@ -2,8 +2,9 @@ import { useCallback, useState } from 'react';
 
 import { usePrinterStore } from '../store/printer.store';
 import { buildReceipt, ReceiptData } from '../templates/receipt.template';
+import { buildKitchenTicket, KitchenTicketData } from '../templates/kitchenTicket.template';
 import { getTransport, PrinterError } from '../transports';
-import { PrinterDevice, PrintResult } from '../types';
+import { PrinterDevice, PrinterProfile, PrintResult } from '../types';
 
 /**
  * The printing API used by screens.
@@ -71,8 +72,15 @@ export function usePrinter() {
    * Reconnects on demand: Bluetooth sockets drop when the printer sleeps, so
    * requiring a manual reconnect before every sale would be unusable.
    */
-  const printReceipt = useCallback(
-    async (data: ReceiptData): Promise<PrintResult> => {
+  /**
+   * Shared transport path for anything we print. Takes a builder rather than
+   * bytes so the profile in force at send time is the one used to render.
+   */
+  const printWith = useCallback(
+    async (
+      render: (profile: PrinterProfile) => Uint8Array,
+      failureMessage: string,
+    ): Promise<PrintResult> => {
       const current = usePrinterStore.getState().profile;
 
       if (!current.device) {
@@ -88,7 +96,7 @@ export function usePrinter() {
           await transport.connect(current.device);
         }
 
-        const bytes = buildReceipt(data, current);
+        const bytes = render(current);
         for (let copy = 0; copy < Math.max(1, current.copies); copy += 1) {
           await transport.write(bytes);
         }
@@ -98,13 +106,28 @@ export function usePrinter() {
         return { ok: true };
       } catch (error) {
         setConnection('disconnected');
-        const message =
-          error instanceof Error ? error.message : 'Receipt printing failed.';
+        const message = error instanceof Error ? error.message : failureMessage;
         setLastError(message);
         return { ok: false, error: message };
       }
     },
     [setConnection, setLastError],
+  );
+
+  const printReceipt = useCallback(
+    (data: ReceiptData): Promise<PrintResult> =>
+      printWith((profile) => buildReceipt(data, profile), 'Receipt printing failed.'),
+    [printWith],
+  );
+
+  /**
+   * Kitchen ticket. Same never-throws contract as printReceipt: a dead printer
+   * must not stop an order that is already saved and on screen.
+   */
+  const printKitchenTicket = useCallback(
+    (data: KitchenTicketData): Promise<PrintResult> =>
+      printWith((profile) => buildKitchenTicket(data, profile), 'Ticket printing failed.'),
+    [printWith],
   );
 
   return {
@@ -116,5 +139,6 @@ export function usePrinter() {
     connect,
     disconnect,
     printReceipt,
+    printKitchenTicket,
   };
 }

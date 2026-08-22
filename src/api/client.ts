@@ -40,11 +40,21 @@ type UnauthorizedHandler = () => void;
  */
 class ApiClient {
   private token: string | null = null;
+  private refreshToken: string | null = null;
   private onUnauthorized: UnauthorizedHandler | null = null;
 
-  /** Loads the persisted token. Must be awaited once before the first request. */
+  /**
+   * In-flight refresh shared by all callers. Several screens fire queries in
+   * parallel, so without this each would refresh independently: the first
+   * rotates the token and the rest replay a spent one, which the server reads
+   * as token theft and answers by revoking the entire session.
+   */
+  private refreshInFlight: Promise<string | null> | null = null;
+
+  /** Loads the persisted tokens. Must be awaited once before the first request. */
   async hydrate(): Promise<string | null> {
     this.token = await secureStorage.getToken();
+    this.refreshToken = await secureStorage.getRefreshToken();
     return this.token;
   }
 
@@ -57,17 +67,78 @@ class ApiClient {
     await secureStorage.setToken(token);
   }
 
-  async clearToken(): Promise<void> {
-    this.token = null;
-    await secureStorage.clearToken();
+  getRefreshToken(): string | null {
+    return this.refreshToken;
   }
 
-  /** Registered by AuthProvider so a 401 anywhere logs the user out. */
+  async setRefreshToken(token: string): Promise<void> {
+    this.refreshToken = token;
+    await secureStorage.setRefreshToken(token);
+  }
+
+  async clearToken(): Promise<void> {
+    this.token = null;
+    this.refreshToken = null;
+    await secureStorage.clearToken();
+    await secureStorage.clearRefreshToken();
+  }
+
+  /**
+   * Registered by AuthProvider. Now fires only when the session is genuinely
+   * unrecoverable — a bare 401 is handled by refreshing and retrying.
+   */
   setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
     this.onUnauthorized = handler;
   }
 
-  async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  /** Exchanges the refresh token for a new pair. Null means "session is over". */
+  private async refreshAccessToken(): Promise<string | null> {
+    if (!this.refreshInFlight) {
+      // Cleanup goes on the OUTER promise via .finally(), not inside
+      // performRefresh(). A `finally` in the async body can run synchronously
+      // when the body returns before its first await, clearing this field
+      // *before* the assignment below lands — the assignment would then store
+      // an already-settled promise that every later refresh short-circuits to,
+      // permanently breaking renewal. .finally() always runs a microtask later.
+      this.refreshInFlight = this.performRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+
+    return this.refreshInFlight;
+  }
+
+  private async performRefresh(): Promise<string | null> {
+    if (!this.refreshToken) return null;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: this.refreshToken }),
+      });
+
+      if (!response.ok) return null;
+
+      const payload = safeParse(await response.text()) as {
+        accessToken?: string;
+        refreshToken?: string;
+      } | null;
+
+      if (!payload?.accessToken) return null;
+
+      await this.setToken(payload.accessToken);
+      // The server rotates on every refresh, so the previous one is dead.
+      if (payload.refreshToken) await this.setRefreshToken(payload.refreshToken);
+
+      return payload.accessToken;
+    } catch {
+      // Offline: keep the session and let the caller surface a network error.
+      return null;
+    }
+  }
+
+  async request<T>(path: string, options: RequestOptions = {}, isRetry = false): Promise<T> {
     const { method = 'GET', body, anonymous = false, signal } = options;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -102,7 +173,14 @@ class ApiClient {
     const payload = text ? safeParse(text) : null;
 
     if (!response.ok) {
-      if (response.status === 401) {
+      // Access tokens are deliberately short-lived, so a 401 is the normal way
+      // a long session renews itself rather than a sign the user is signed
+      // out. Refresh once, replay, and only give up if the refresh fails.
+      if (response.status === 401 && !isRetry && !anonymous) {
+        const refreshed = await this.refreshAccessToken();
+        if (refreshed) {
+          return this.request<T>(path, options, true);
+        }
         this.onUnauthorized?.();
       }
       throw new ApiError(extractMessage(payload) ?? 'Request failed', response.status);

@@ -1,4 +1,4 @@
-import { AppUser, InvoiceData, Order, Store } from '@/api/types';
+import { AppUser, InvoiceData, Order, RestaurantOrder, Store } from '@/api/types';
 import { paymentLabel } from '@/constants/statuses';
 import { toNumber } from '@/lib/format';
 
@@ -136,5 +136,56 @@ export function sampleReceipt(currency: string): ReceiptData {
     total: 1210,
     paymentMethod: 'Cash',
     currency,
+  };
+}
+
+/**
+ * Restaurant variant.
+ *
+ * Differs from receiptFromOrder in what identifies the sale: a restaurant
+ * receipt is identified by its table and the waiter who served it, not by the
+ * cashier who happened to ring it up.
+ */
+export function receiptFromRestaurantOrder(params: {
+  order: RestaurantOrder;
+  store: Store | null | undefined;
+  currency: string;
+  isReprint?: boolean;
+}): ReceiptData {
+  const { order, store, currency, isReprint } = params;
+
+  const items = (order.items ?? []).map((item) => ({
+    name: item.productName ?? 'Item',
+    quantity: item.quantity,
+    unitPrice: toNumber(item.unitPrice),
+    discount: 0,
+    total: toNumber(item.total),
+  }));
+
+  const rawSubtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+
+  const destination =
+    order.tableName ?? (order.orderType === 'delivery' ? 'Delivery' : 'Takeaway');
+
+  return {
+    store: {
+      name: store?.name || 'Restaurant',
+      address: store?.address,
+      phone: store?.phone,
+    },
+    // The customer-facing number is the per-store sequence, not the internal id.
+    invoiceNumber: order.orderSequence ? `#${order.orderSequence}` : order.orderNumber,
+    date: new Date(order.createdAt),
+    customerName: order.customerName ?? destination,
+    // The waiter is who the customer dealt with, so that is the useful name.
+    dispatchedBy: order.waiterName ?? 'Staff',
+    items,
+    rawSubtotal,
+    totalDiscount: toNumber(order.discount),
+    tax: 0,
+    total: toNumber(order.total),
+    paymentMethod: order.paymentMethod ? paymentLabel(order.paymentMethod) : undefined,
+    currency,
+    isReprint,
   };
 }

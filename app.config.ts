@@ -35,7 +35,8 @@ const config: ExpoConfig = {
   android: {
     package: 'store.tapntrade.pos',
     adaptiveIcon: {
-      backgroundColor: '#0F172A',
+      // The mark is dark navy, so it needs a light ground to read at all.
+      backgroundColor: '#FFFFFF',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
@@ -68,9 +69,15 @@ const config: ExpoConfig = {
     [
       'expo-splash-screen',
       {
-        image: './assets/splash-icon.png',
-        backgroundColor: '#0F172A',
-        imageWidth: 180,
+        /**
+         * Intentionally a blank image: the native splash paints the brand
+         * background only, and AnimatedSplash then flies the logo up from the
+         * bottom. Pointing this at the real artwork would draw the logo
+         * centred first, so the animation would start with a visible jump.
+         */
+        image: './assets/splash-blank.png',
+        backgroundColor: '#FFFFFF',
+        imageWidth: 16,
       },
     ],
     [

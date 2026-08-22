@@ -10,6 +10,16 @@
 
 export type UserRole = 'admin' | 'store_owner' | 'employee';
 
+export type AccountType = 'general' | 'restaurant';
+
+export type EffectiveRole =
+  | 'super_admin'
+  | 'store_owner'
+  | 'restaurant_owner'
+  | 'waiter'
+  | 'kitchen'
+  | 'cashier';
+
 export type OrderStatus =
   | 'pending'
   | 'paid'
@@ -19,6 +29,116 @@ export type OrderStatus =
   | 'completed';
 
 export type PaymentMethod = 'cash' | 'card' | 'check' | 'online';
+
+/**
+ * Restaurant lifecycle, deliberately a separate union from OrderStatus.
+ *
+ * Widening OrderStatus would break `Record<OrderStatus, StatusTone>` in
+ * constants/statuses.ts and every general-account screen that maps over it.
+ * 'none' marks an order that is not part of the restaurant flow.
+ */
+export type RestaurantOrderStatus =
+  | 'none'
+  | 'draft'
+  | 'requested'
+  | 'preparing'
+  | 'completed'
+  | 'cancelled';
+
+export type RestaurantOrderType = 'none' | 'dine_in' | 'takeaway' | 'delivery';
+
+export type TableStatus = 'free' | 'reserved';
+
+export interface RestaurantTable {
+  id: string;
+  storeId: string;
+  name: string;
+  status: TableStatus;
+  currentOrderId?: string | null;
+  isActive: boolean;
+}
+
+export interface RestaurantOrderItem {
+  id: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: Decimal;
+  unitCost?: Decimal | null;
+  total: Decimal;
+  notes?: string | null;
+  /** Which round this line belongs to. Null while still a draft. */
+  sentAt?: string | null;
+}
+
+export interface RestaurantOrder {
+  id: string;
+  /** Internal, globally-unique. Display `orderSequence` instead. */
+  orderNumber: string;
+  /** Per-store display number, counting from 1. */
+  orderSequence?: number | null;
+  storeId: string;
+  orderStatus: RestaurantOrderStatus;
+  orderType: RestaurantOrderType;
+  /** Mirror of the legacy `status` column, exposed under a clearer name. */
+  paymentStatus: OrderStatus;
+  status: OrderStatus;
+  tableId?: string | null;
+  tableName?: string | null;
+  waiterName?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  deliveryAddress?: string | null;
+  items: RestaurantOrderItem[];
+  subtotal: Decimal;
+  discount: Decimal;
+  discountType?: 'amount' | 'percent' | null;
+  discountValue?: Decimal | null;
+  total: Decimal;
+  paymentMethod?: PaymentMethod | null;
+  notes?: string | null;
+  version: number;
+  createdAt: string;
+}
+
+export interface RestaurantOrderItemPayload {
+  productId: string;
+  quantity: number;
+  notes?: string;
+}
+
+export interface CreateRestaurantOrderPayload {
+  orderType: 'dine_in' | 'takeaway' | 'delivery';
+  tableId?: string;
+  items: RestaurantOrderItemPayload[];
+  isDraft?: boolean;
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  notes?: string;
+}
+
+/** Envelope returned when an endpoint is called with `withCount=true`. */
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  skip: number;
+  take: number;
+}
+
+export interface RestaurantSalesReport {
+  orderCount: number;
+  revenue: number;
+  cost: number;
+  profit: number;
+  discountTotal: number;
+  averageOrderValue: number;
+  /** Lines sold with no cost price recorded — profit is overstated by these. */
+  unknownCostLineCount: number;
+  topProducts: { name: string; quantity: number; revenue: number; profit: number }[];
+  byWaiter: { name: string; orders: number; revenue: number }[];
+  byOrderType: { orderType: string; orders: number; revenue: number }[];
+}
 
 /** A money value as it arrives from the API — always run through `toNumber()`. */
 export type Decimal = number | string;
@@ -41,10 +161,26 @@ export interface AppUser {
    * printer binding lives in local storage instead. Kept only for reference.
    */
   printerConfig?: string;
+  /** 'general' keeps today's flow; 'restaurant' unlocks the table-service screens. */
+  accountType?: AccountType;
+  /** Employee job title. Only meaningful for restaurant tenants. */
+  designation?: string;
+  printerName?: string;
+  /**
+   * Server-derived from (role x accountType x designation) — the single value
+   * navigation branches on. `role` above is untouched and still drives every
+   * existing general-account screen.
+   */
+  effectiveRole?: EffectiveRole;
 }
 
 export interface LoginResponse {
   accessToken: string;
+  /**
+   * Opaque, 7-day, rotated on every use. Persisted in SecureStore; it is what
+   * keeps a user signed in past the 30-minute access token.
+   */
+  refreshToken: string;
   user: AppUser;
 }
 

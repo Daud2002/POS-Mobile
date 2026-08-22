@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { RootNavigator } from '@/app/navigation/RootNavigator';
 import { AppProviders } from '@/app/providers/AppProviders';
+import { AnimatedSplash } from '@/app/providers/AnimatedSplash';
 import { FontGate } from '@/app/providers/FontGate';
 import { useThemeMode } from '@/theme/ThemeProvider';
 
@@ -17,7 +18,13 @@ export default function App() {
     <FontGate>
       <AppProviders>
         <ThemedStatusBar />
-        <RootNavigator />
+        {/*
+          Inside the providers so the navigator mounts underneath while the
+          splash plays — the first screen is laid out by the time it fades.
+        */}
+        <AnimatedSplash>
+          <RootNavigator />
+        </AnimatedSplash>
       </AppProviders>
     </FontGate>
   );

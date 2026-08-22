@@ -27,6 +27,8 @@ const productSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
   price: numericString('Enter a valid price'),
+  /** Optional: legacy products have no cost, and profit reporting tolerates that. */
+  costPrice: z.string().optional(),
   stock: numericString('Enter a valid stock quantity'),
   lowStockAlertQuantity: numericString('Enter a low-stock threshold'),
   categoryId: z.string().min(1, 'Choose a category'),
@@ -51,6 +53,7 @@ const EMPTY_FORM: ProductForm = {
   name: '',
   description: '',
   price: '',
+  costPrice: '',
   stock: '',
   // Matches the web form's default.
   lowStockAlertQuantity: '5',
@@ -92,6 +95,12 @@ export function ProductFormSheet({
             name: product.name,
             description: product.description ?? '',
             price: String(toNumber(product.price)),
+            // Blank rather than 0 when unset, so "no cost recorded" stays
+            // visible instead of being silently saved as a zero cost.
+            costPrice:
+              product.costPrice === null || product.costPrice === undefined
+                ? ''
+                : String(toNumber(product.costPrice)),
             stock: String(product.stock),
             lowStockAlertQuantity: String(product.lowStockAlertQuantity ?? 5),
             categoryId: product.categoryId ?? '',
@@ -107,8 +116,10 @@ export function ProductFormSheet({
       name: values.name.trim(),
       description: values.description?.trim() || undefined,
       price: Number(values.price),
-      // The web form hardcodes costPrice to 0; there is no field for it.
-      costPrice: 0,
+      // Drives the profit figure on the owner dashboard. This was previously
+      // hardcoded to 0 on both clients, which made reported profit equal to
+      // revenue.
+      costPrice: values.costPrice ? Number(values.costPrice) : 0,
       stock: Number(values.stock),
       lowStockAlertQuantity: Number(values.lowStockAlertQuantity),
       sku: values.sku?.trim() || undefined,
@@ -195,6 +206,24 @@ export function ProductFormSheet({
               placeholder="0.00"
               keyboardType="decimal-pad"
               error={errors.price?.message}
+            />
+          )}
+        />
+
+        <Controller
+          control={control}
+          name="costPrice"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <Input
+              containerStyle={{ flex: 1 }}
+              label="Cost"
+              value={value ?? ''}
+              onChangeText={onChange}
+              onBlur={onBlur}
+              placeholder="0.00"
+              keyboardType="decimal-pad"
+              hint="Used to calculate profit"
+              error={errors.costPrice?.message}
             />
           )}
         />
