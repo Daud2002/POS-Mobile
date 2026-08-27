@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { queryKeys } from '@/api/queryKeys';
-import { ordersApi, productsApi } from '@/api/services';
+import { expensesApi, ordersApi, productsApi } from '@/api/services';
 import { Order, Product } from '@/api/types';
+import { useAuth } from '@/app/providers/AuthProvider';
+import { can } from '@/lib/access';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/constants/config';
 import { useStoreId } from '@/hooks/useStoreId';
 import { lastNDays, localDateKey, weekdayLabel } from '@/lib/date';
@@ -31,6 +33,7 @@ function isLowStock(product: Product): boolean {
  */
 export function useDashboardData() {
   const storeId = useStoreId();
+  const { user } = useAuth();
 
   const ordersQuery = useQuery({
     queryKey: queryKeys.orders(),
@@ -41,6 +44,22 @@ export function useDashboardData() {
     queryKey: queryKeys.products(storeId ?? ''),
     queryFn: () => productsApi.list(storeId!, 0, 1000),
     enabled: !!storeId,
+  });
+
+  /**
+   * Today's spend, which unlike everything else here IS a server-computed
+   * figure — expenses are filed against a calendar day, so the API can total
+   * them directly rather than the app pulling the whole ledger down.
+   *
+   * Behind the expenses module: an employee given the dashboard but not
+   * expenses must not see the store's outgoings.
+   */
+  const canSeeExpenses = can(user, 'expenses');
+  const todayKeyForExpenses = localDateKey(new Date());
+  const expensesQuery = useQuery({
+    queryKey: queryKeys.expenseSummary(todayKeyForExpenses),
+    queryFn: () => expensesApi.summary(todayKeyForExpenses),
+    enabled: canSeeExpenses,
   });
 
   const metrics = useMemo(() => {
@@ -109,11 +128,15 @@ export function useDashboardData() {
 
   return {
     ...metrics,
+    canSeeExpenses,
+    todayExpenses: expensesQuery.data?.today ?? 0,
+    monthExpenses: expensesQuery.data?.month ?? 0,
     loading: ordersQuery.isLoading || productsQuery.isLoading,
     refetching: ordersQuery.isRefetching || productsQuery.isRefetching,
     refetch: () => {
       void ordersQuery.refetch();
       void productsQuery.refetch();
+      void expensesQuery.refetch();
     },
   };
 }

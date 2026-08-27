@@ -21,6 +21,7 @@ export type RootStackParamList = {
   CustomerOrders: { customerId: string; customerName: string };
   Employees: undefined;
   Reports: undefined;
+  Expenses: undefined;
 
   // Settings
   Settings: undefined;

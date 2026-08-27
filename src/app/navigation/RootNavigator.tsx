@@ -8,6 +8,7 @@ import { CategoriesScreen } from '@/features/categories/screens/CategoriesScreen
 import { CustomerOrdersScreen } from '@/features/customers/screens/CustomerOrdersScreen';
 import { CustomersScreen } from '@/features/customers/screens/CustomersScreen';
 import { EmployeesScreen } from '@/features/employees/screens/EmployeesScreen';
+import { ExpensesScreen } from '@/features/expenses/screens/ExpensesScreen';
 import { InventoryScreen } from '@/features/inventory/screens/InventoryScreen';
 import { OrderCompleteScreen } from '@/features/pos/screens/OrderCompleteScreen';
 import { PrinterSetupScreen } from '@/features/printing/screens/PrinterSetupScreen';
@@ -127,6 +128,11 @@ export function RootNavigator() {
             name="Reports"
             component={ReportsScreen}
             options={{ title: 'Reports' }}
+          />
+          <Stack.Screen
+            name="Expenses"
+            component={ExpensesScreen}
+            options={{ title: 'Expenses' }}
           />
 
           <Stack.Screen

@@ -41,7 +41,7 @@ export const restaurantApi = {
    * views deliberately keep using listOrders() and receive the complete set.
    */
   listOrdersPaged(
-    params: { orderStatus?: string; orderType?: string; tableId?: string } = {},
+    params: { orderStatus?: string; orderType?: string; tableId?: string; search?: string } = {},
     paging: { skip: number; take: number },
   ) {
     return apiClient.get<Paged<RestaurantOrder>>(

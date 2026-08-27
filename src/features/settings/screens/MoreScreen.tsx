@@ -4,11 +4,11 @@ import {
   BarChart3,
   ChevronRight,
   FolderTree,
-  Package,
   Settings as SettingsIcon,
   ShoppingBag,
   Users,
   UserSquare,
+  Wallet,
   Warehouse,
 } from 'lucide-react-native';
 import { ComponentType } from 'react';
@@ -16,7 +16,8 @@ import { View } from 'react-native';
 
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
-import { effectiveRoleOf } from '@/lib/roles';
+import type { PermissionKey } from '@/api/types';
+import { isOwner, permissionsOf } from '@/lib/access';
 import { Screen } from '@/components/layout/Screen';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
@@ -33,16 +34,23 @@ interface MenuEntry {
   icon: ComponentType<{ size?: number; color?: string }>;
   /** Icon chip tone — varied per row so the menu scans by color. */
   tone: keyof Pick<ColorTokens, 'primary' | 'accent' | 'info' | 'warning' | 'destructive'>;
+  /** The module that unlocks this row. Omitted rows are owner-only. */
+  permission?: PermissionKey;
+  /** Restricts the row to one account type. */
+  accountType?: 'general' | 'restaurant';
+  /** Restaurant tenants call the same screen something else. */
+  restaurantLabel?: string;
+  restaurantDescription?: string;
 }
 
 /**
- * Store-owner destinations that don't fit in the tab bar.
+ * Everything that does not fit in the tab bar.
  *
- * This is the web sidebar's `store_owner` nav minus the four tab screens. The
- * whole `admin` branch of that nav is intentionally absent — the mobile app has
- * no super-admin panel.
+ * Rows are gated by MODULE, not role, so a cashier granted expenses finds
+ * Expenses here without a second menu table. The two owner-only rows carry no
+ * `permission` — they cannot be delegated, so there is no module for them.
  */
-const STORE_OWNER_MENU: Array<{ title: string; items: MenuEntry[] }> = [
+const MENU: Array<{ title: string; items: MenuEntry[] }> = [
   {
     title: 'Catalog',
     items: [
@@ -50,22 +58,43 @@ const STORE_OWNER_MENU: Array<{ title: string; items: MenuEntry[] }> = [
         route: 'Products',
         label: 'Products',
         description: 'Catalog, pricing and stock levels',
+        restaurantLabel: 'Dishes',
+        restaurantDescription: 'Names, prices and cost for profit',
         icon: ShoppingBag,
         tone: 'primary',
+        permission: 'products',
       },
       {
         route: 'Categories',
         label: 'Categories',
         description: 'Group products for the POS grid',
+        restaurantDescription: 'Group dishes for the order screen',
         icon: FolderTree,
         tone: 'accent',
+        permission: 'categories',
       },
       {
+        // Restaurant accounts do not track stock.
         route: 'Inventory',
         label: 'Inventory',
         description: 'Adjust stock and spot low items',
         icon: Warehouse,
         tone: 'warning',
+        permission: 'inventory',
+        accountType: 'general',
+      },
+    ],
+  },
+  {
+    title: 'Money',
+    items: [
+      {
+        route: 'Expenses',
+        label: 'Expenses',
+        description: "What the store has spent, and today's total",
+        icon: Wallet,
+        tone: 'warning',
+        permission: 'expenses',
       },
     ],
   },
@@ -78,11 +107,15 @@ const STORE_OWNER_MENU: Array<{ title: string; items: MenuEntry[] }> = [
         description: 'Contacts and purchase history',
         icon: Users,
         tone: 'info',
+        permission: 'customers',
+        accountType: 'general',
       },
       {
         route: 'Employees',
         label: 'Employees',
-        description: 'Staff accounts and access',
+        description: 'Staff accounts and permissions',
+        restaurantLabel: 'Staff',
+        restaurantDescription: 'Waiters, kitchen, cashiers and their permissions',
         icon: UserSquare,
         tone: 'accent',
       },
@@ -92,48 +125,7 @@ const STORE_OWNER_MENU: Array<{ title: string; items: MenuEntry[] }> = [
         description: 'Revenue, orders and payment mix',
         icon: BarChart3,
         tone: 'primary',
-      },
-    ],
-  },
-];
-
-/** Cashiers get only Settings here — their tab bar already covers POS and Orders. */
-const CASHIER_MENU: typeof STORE_OWNER_MENU = [];
-
-/**
- * Restaurant owner. Deliberately omits Inventory — restaurant accounts do not
- * track stock — and reuses the shared Products/Categories/Employees screens,
- * which are already store-scoped.
- */
-const RESTAURANT_OWNER_MENU: typeof STORE_OWNER_MENU = [
-  {
-    title: 'Menu',
-    items: [
-      {
-        route: 'Products',
-        label: 'Dishes',
-        description: 'Names, prices and cost for profit',
-        icon: ShoppingBag,
-        tone: 'primary',
-      },
-      {
-        route: 'Categories',
-        label: 'Categories',
-        description: 'Group dishes for the order screen',
-        icon: FolderTree,
-        tone: 'accent',
-      },
-    ],
-  },
-  {
-    title: 'People',
-    items: [
-      {
-        route: 'Employees',
-        label: 'Staff',
-        description: 'Waiters, kitchen and cashiers',
-        icon: UserSquare,
-        tone: 'accent',
+        accountType: 'general',
       },
     ],
   },
@@ -144,15 +136,18 @@ export function MoreScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user } = useAuth();
 
-  // Branch on the derived role: a restaurant owner is also role 'store_owner',
-  // so `role` alone cannot tell the two menus apart.
-  const role = effectiveRoleOf(user);
-  const groups =
-    role === 'restaurant_owner'
-      ? RESTAURANT_OWNER_MENU
-      : role === 'store_owner'
-        ? STORE_OWNER_MENU
-        : CASHIER_MENU;
+  const isRestaurant = user?.accountType === 'restaurant';
+  const granted = permissionsOf(user);
+  const owner = isOwner(user);
+
+  const groups = MENU.map((group) => ({
+    title: group.title,
+    items: group.items.filter((item) => {
+      if (item.accountType && (item.accountType === 'restaurant') !== isRestaurant) return false;
+      // No `permission` means the row cannot be delegated at all.
+      return item.permission ? granted.includes(item.permission) : owner;
+    }),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <Screen scrollable edges={['top', 'bottom']}>
@@ -164,18 +159,23 @@ export function MoreScreen() {
             {group.title}
           </Text>
           <Card padding="none">
-            {group.items.map(({ route, label, description, icon: Icon, tone }, rowIndex) => (
-              <SettingsRow
-                key={route}
-                icon={<Icon size={18} color={theme.colors[tone]} />}
-                color={theme.colors[tone]}
-                label={label}
-                description={description}
-                divided={rowIndex < group.items.length - 1}
-                onPress={() => navigation.navigate(route as never)}
-                trailing={<ChevronRight size={18} color={theme.colors.mutedForeground} />}
-              />
-            ))}
+            {group.items.map((item, rowIndex) => {
+              const Icon = item.icon;
+              return (
+                <SettingsRow
+                  key={item.route}
+                  icon={<Icon size={18} color={theme.colors[item.tone]} />}
+                  color={theme.colors[item.tone]}
+                  label={(isRestaurant && item.restaurantLabel) || item.label}
+                  description={
+                    (isRestaurant && item.restaurantDescription) || item.description
+                  }
+                  divided={rowIndex < group.items.length - 1}
+                  onPress={() => navigation.navigate(item.route as never)}
+                  trailing={<ChevronRight size={18} color={theme.colors.mutedForeground} />}
+                />
+              );
+            })}
           </Card>
         </View>
       ))}

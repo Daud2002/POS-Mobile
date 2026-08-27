@@ -9,6 +9,7 @@ import { Screen } from '@/components/layout';
 import { Button, EmptyState, SearchInput, Text } from '@/components/ui';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
+import { useDebouncedValue } from '@/hooks/useDebouncedCallback';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
 import { orderLabel } from '@/lib/orderLabel';
@@ -32,6 +33,7 @@ export function RestaurantOrdersScreen() {
 
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const statuses = FILTERS.find((f) => f.key === filter)?.statuses;
@@ -44,10 +46,15 @@ export function RestaurantOrdersScreen() {
    * lose their place by paging away from it.
    */
   const ordersQuery = useInfiniteQuery({
-    queryKey: queryKeys.restaurantOrders(filter),
+    // The search term is part of the key, so a new term starts a fresh list
+    // rather than appending onto results for the previous one.
+    queryKey: [...queryKeys.restaurantOrders(filter), debouncedSearch],
     initialPageParam: 0,
     queryFn: ({ pageParam }) =>
-      restaurantApi.listOrdersPaged({ orderStatus: statuses }, { skip: pageParam as number, take: PAGE_SIZE }),
+      restaurantApi.listOrdersPaged(
+        { orderStatus: statuses, search: debouncedSearch || undefined },
+        { skip: pageParam as number, take: PAGE_SIZE },
+      ),
     getNextPageParam: (last) => {
       const loaded = last.skip + last.items.length;
       return loaded < last.total ? loaded : undefined;
@@ -71,17 +78,8 @@ export function RestaurantOrdersScreen() {
   const orders = ordersQuery.data?.pages.flatMap((p) => p.items) ?? [];
   const total = ordersQuery.data?.pages[0]?.total ?? 0;
 
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(
-      (o) =>
-        orderLabel(o).toLowerCase().includes(q) ||
-        (o.tableName ?? '').toLowerCase().includes(q) ||
-        (o.customerName ?? '').toLowerCase().includes(q) ||
-        (o.waiterName ?? '').toLowerCase().includes(q),
-    );
-  }, [orders, search]);
+  // Searched by the API, so the screen shows exactly what came back.
+  const visible = orders;
 
   // Only settled orders represent money actually taken.
   const settledTotal = useMemo(
@@ -113,7 +111,7 @@ export function RestaurantOrdersScreen() {
         <SearchInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Filter loaded orders…"
+          placeholder="Search #, table, customer, waiter…"
         />
 
         <View style={styles.filterRow}>

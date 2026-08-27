@@ -1,5 +1,5 @@
 import { apiClient, query } from '../client';
-import { Employee, EmployeePayload } from '../types';
+import { Employee, EmployeePayload, EmployeePermissions } from '../types';
 
 export const employeesApi = {
   /**
@@ -27,5 +27,21 @@ export const employeesApi = {
 
   remove(id: string) {
     return apiClient.delete<void>(`/employees/${id}`);
+  },
+
+  /**
+   * What this employee holds, plus what may still be assigned.
+   *
+   * `grantable` comes from the server rather than being derived here, so the
+   * per-designation rules live in one place — an app release is not needed for
+   * a change to them to take effect.
+   */
+  permissions(id: string) {
+    return apiClient.get<EmployeePermissions>(`/employees/${id}/permissions`);
+  },
+
+  /** Owner only. Replaces the whole set; the base module cannot be revoked. */
+  setPermissions(id: string, permissions: string[]) {
+    return apiClient.patch<EmployeePermissions>(`/employees/${id}/permissions`, { permissions });
   },
 };

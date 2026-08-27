@@ -1,16 +1,19 @@
 import { useCallback, useState } from 'react';
 import { View, StyleSheet, Pressable } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, DollarSign, Percent, ShoppingCart, TrendingUp } from 'lucide-react-native';
+import { AlertTriangle, DollarSign, Percent, ShoppingCart, TrendingUp, Wallet } from 'lucide-react-native';
 
-import { restaurantApi } from '@/api/services';
+import { expensesApi, restaurantApi } from '@/api/services';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
-import { SectionCard, StatCard, KeyValueRow } from '@/components/data';
+import { SectionCard, StatCard, StatRow, KeyValueRow } from '@/components/data';
 import { Text } from '@/components/ui';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
+import { can } from '@/lib/access';
+import { localDateKey } from '@/lib/date';
 import { tint, useTheme } from '@/theme';
 
 const RANGES = [
@@ -32,6 +35,7 @@ function rangeStart(key: string): string | undefined {
 
 export function RestaurantDashboardScreen() {
   const theme = useTheme();
+  const { user } = useAuth();
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
   const [range, setRange] = useState<string>('today');
@@ -39,6 +43,21 @@ export function RestaurantDashboardScreen() {
   const reportQuery = useQuery({
     queryKey: queryKeys.restaurantReport(range),
     queryFn: () => restaurantApi.salesReport(rangeStart(range)),
+  });
+
+  /**
+   * Today's spend. Deliberately not tied to the range picker above — the owner
+   * wants today's outgoings whichever sales window they are looking at.
+   *
+   * The day key comes from the DEVICE, so "today" is the user's calendar day
+   * rather than the API server's timezone.
+   */
+  const today = localDateKey(new Date());
+  const canSeeExpenses = can(user, 'expenses');
+  const expensesQuery = useQuery({
+    queryKey: queryKeys.expenseSummary(today),
+    queryFn: () => expensesApi.summary(today),
+    enabled: canSeeExpenses,
   });
 
   const refresh = useCallback(() => {
@@ -76,7 +95,7 @@ export function RestaurantDashboardScreen() {
           ))}
         </View>
 
-        <View style={styles.statGrid}>
+        <StatRow>
           <StatCard
             title="Revenue"
             value={format(report?.revenue ?? 0)}
@@ -98,7 +117,18 @@ export function RestaurantDashboardScreen() {
             value={format(report?.discountTotal ?? 0)}
             icon={<Percent size={18} color={theme.colors.warning} />}
           />
-        </View>
+          {/* Behind the expenses module: staff given the dashboard but not
+              expenses never see the store's outgoings. */}
+          {canSeeExpenses ? (
+            <StatCard
+              title="Expenses today"
+              value={format(expensesQuery.data?.today ?? 0)}
+              subtitle={`${format(expensesQuery.data?.month ?? 0)} this month`}
+              icon={<Wallet size={18} color={theme.colors.destructive} />}
+              loading={expensesQuery.isLoading}
+            />
+          ) : null}
+        </StatRow>
 
         {/*
           Profit is only as trustworthy as the cost prices behind it. Rather
@@ -169,7 +199,6 @@ export function RestaurantDashboardScreen() {
 const styles = StyleSheet.create({
   rangeRow: { flexDirection: 'row', gap: 8 },
   rangeBtn: { borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
-  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   warning: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     borderWidth: 1, padding: 12,

@@ -4,6 +4,7 @@ import {
   Receipt,
   ShoppingCart,
   Wallet,
+  Banknote,
 } from 'lucide-react-native';
 import { StyleSheet, View } from 'react-native';
 
@@ -11,6 +12,7 @@ import { useAuth } from '@/app/providers/AuthProvider';
 import { AreaChart } from '@/components/charts/AreaChart';
 import { SectionCard } from '@/components/data/SectionCard';
 import { StatCard } from '@/components/data/StatCard';
+import { StatRow } from '@/components/data/StatRow';
 import { StatusPill } from '@/components/data/StatusPill';
 import { Screen } from '@/components/layout/Screen';
 import { Avatar } from '@/components/ui/Avatar';
@@ -127,7 +129,7 @@ export function DashboardScreen() {
       </View>
 
       {/* Stat row -------------------------------------------------------- */}
-      <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+      <StatRow>
         <StatCard
           title="Total Orders"
           value={String(data.totalOrders)}
@@ -149,7 +151,18 @@ export function DashboardScreen() {
           icon={<AlertTriangle size={19} color={theme.colors.warning} />}
           loading={data.loading}
         />
-      </View>
+        {/* Behind the expenses module — staff given the dashboard but not
+            expenses do not see the store's outgoings. */}
+        {data.canSeeExpenses ? (
+          <StatCard
+            title="Expenses today"
+            value={format(data.todayExpenses)}
+            tone="destructive"
+            icon={<Banknote size={19} color={theme.colors.destructive} />}
+            loading={data.loading}
+          />
+        ) : null}
+      </StatRow>
 
       {/* Weekly trend ----------------------------------------------------- */}
       <SectionCard title="Weekly Sales" subtitle="Revenue over the last 7 days">

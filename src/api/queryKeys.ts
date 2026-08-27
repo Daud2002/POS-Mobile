@@ -21,6 +21,13 @@ export const queryKeys = {
   customerOrders: (customerId: string) => ['customer', customerId, 'orders'] as const,
 
   employees: (storeId: string) => ['employees', storeId] as const,
+  employeePermissions: (id: string) => ['employee', id, 'permissions'] as const,
+
+  // Expenses. Store-scoped like everything else, but the filter is part of the
+  // key so switching range does not serve the previous range's rows.
+  expenses: (filter?: string) => ['expenses', filter ?? 'all'] as const,
+  expenseCategories: () => ['expenses', 'categories'] as const,
+  expenseSummary: (day: string) => ['expenses', 'summary', day] as const,
 
   store: (id: string) => ['store', id] as const,
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Trash2, UserSquare } from 'lucide-react-native';
+import { Pencil, ShieldCheck, Trash2, UserSquare } from 'lucide-react-native';
 import { useState } from 'react';
 import { FlatList, RefreshControl, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +24,7 @@ import { useStoreId } from '@/hooks/useStoreId';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { EmployeeFormSheet } from '../components/EmployeeFormSheet';
+import { PermissionsSheet } from '../components/PermissionsSheet';
 
 /**
  * Store staff.
@@ -41,6 +42,8 @@ export function EmployeesScreen() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState<Employee | null>(null);
+  /** Whose module access is open for editing. Only owners reach this screen. */
+  const [permissionsFor, setPermissionsFor] = useState<Employee | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.employees(storeId ?? ''),
@@ -183,6 +186,12 @@ export function EmployeesScreen() {
                   <Pencil size={16} color={theme.colors.foreground} />
                 </IconButton>
                 <IconButton
+                  accessibilityLabel={`Permissions for ${item.name}`}
+                  onPress={() => setPermissionsFor(item)}
+                >
+                  <ShieldCheck size={16} color={theme.colors.foreground} />
+                </IconButton>
+                <IconButton
                   accessibilityLabel={`Remove ${item.name}`}
                   tone="destructive"
                   onPress={() => setDeleting(item)}
@@ -209,6 +218,12 @@ export function EmployeesScreen() {
         employee={editing}
         saving={save.isPending}
         onSubmit={save.mutateAsync}
+      />
+
+      <PermissionsSheet
+        open={!!permissionsFor}
+        onClose={() => setPermissionsFor(null)}
+        employee={permissionsFor}
       />
 
       <ConfirmDialog

@@ -20,6 +20,25 @@ export type EffectiveRole =
   | 'kitchen'
   | 'cashier';
 
+/**
+ * A module a user may be granted, mirroring Backend/src/common/permissions.ts.
+ *
+ * `pos` and `cashier` are both "the till" but are different screens — one per
+ * account type — so they stay distinct.
+ */
+export type PermissionKey =
+  | 'dashboard'
+  | 'expenses'
+  | 'pos'
+  | 'cashier'
+  | 'kitchen'
+  | 'tables'
+  | 'products'
+  | 'categories'
+  | 'orders'
+  | 'customers'
+  | 'inventory';
+
 export type OrderStatus =
   | 'pending'
   | 'paid'
@@ -172,6 +191,13 @@ export interface AppUser {
    * existing general-account screen.
    */
   effectiveRole?: EffectiveRole;
+  /**
+   * Modules this user may open, resolved server-side. Absent when the app is
+   * talking to a backend that predates permissions — `permissionsOf()` in
+   * lib/access.ts derives a fallback, which matters because a store build can
+   * lag the API by a release.
+   */
+  permissions?: PermissionKey[];
 }
 
 export interface LoginResponse {
@@ -292,6 +318,78 @@ export interface Employee {
   updatedAt: string;
   /** Employee has no isActive column — it lives on the linked User. */
   user?: { id: string; isActive: boolean };
+  /**
+   * Modules granted ON TOP of the one the designation always carries. Null
+   * means never customised. Read via the /permissions endpoint rather than
+   * this field, which the list endpoint may not populate.
+   */
+  permissions?: string[] | null;
+}
+
+/** GET /employees/:id/permissions — what they hold and what may be added. */
+export interface EmployeePermissions {
+  employeeId: string;
+  designation: string;
+  /** Always held; not revocable. */
+  base: PermissionKey;
+  /** What the owner may additionally assign to this designation. */
+  grantable: PermissionKey[];
+  /** base + granted. */
+  permissions: PermissionKey[];
+}
+
+/** Owner-maintained bucket an expense is filed under. */
+export interface ExpenseCategory {
+  id: string;
+  storeId: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExpensePaymentMethod = 'cash' | 'card' | 'bank' | 'other';
+
+/**
+ * A spend booked against the store — one shared ledger, not a personal one.
+ *
+ * `expenseDate` is a plain 'YYYY-MM-DD', never a timestamp: it is the store's
+ * calendar day, so it must not be run through `new Date()` for display or the
+ * device timezone can shift it a day.
+ */
+export interface Expense {
+  id: string;
+  storeId: string;
+  categoryId?: string | null;
+  title: string;
+  amount: Decimal;
+  expenseDate: string;
+  paymentMethod?: ExpensePaymentMethod | null;
+  notes?: string | null;
+  createdById?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  category?: ExpenseCategory | null;
+  createdBy?: { id: string; name: string } | null;
+}
+
+export interface ExpensePayload {
+  title: string;
+  amount: number;
+  categoryId?: string | null;
+  expenseDate?: string;
+  paymentMethod?: ExpensePaymentMethod;
+  notes?: string;
+}
+
+export interface ExpenseSummary {
+  /** The day these figures cover, echoed back. */
+  date: string;
+  today: number;
+  todayCount: number;
+  month: number;
+  monthCount: number;
 }
 
 /** Response of GET /invoices/:orderId. All decimals are coerced server-side. */
@@ -384,6 +482,12 @@ export interface CustomerPayload {
   address: string;
   email?: string;
   city?: string;
+}
+
+export interface ExpenseCategoryPayload {
+  name: string;
+  description?: string;
+  isActive?: boolean;
 }
 
 export interface EmployeePayload {

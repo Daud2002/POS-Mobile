@@ -1,7 +1,11 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { ChefHat, ClipboardList, LayoutGrid, Menu, Receipt, ShoppingCart, UtensilsCrossed } from 'lucide-react-native';
+import {
+  ChefHat, ClipboardList, LayoutGrid, Menu, Receipt, ShoppingCart, UtensilsCrossed,
+} from 'lucide-react-native';
+import type { ComponentType } from 'react';
 
 import { useAuth } from '@/app/providers/AuthProvider';
+import type { PermissionKey } from '@/api/types';
 import { DashboardScreen } from '@/features/dashboard/screens/DashboardScreen';
 import { OrdersScreen } from '@/features/orders/screens/OrdersScreen';
 import { POSScreen } from '@/features/pos/screens/POSScreen';
@@ -11,24 +15,56 @@ import { KitchenScreen } from '@/features/restaurant/screens/KitchenScreen';
 import { RestaurantCashierScreen } from '@/features/restaurant/screens/RestaurantCashierScreen';
 import { RestaurantDashboardScreen } from '@/features/restaurant/screens/RestaurantDashboardScreen';
 import { RestaurantOrdersScreen } from '@/features/restaurant/screens/RestaurantOrdersScreen';
-import { effectiveRoleOf } from '@/lib/roles';
+import { isOwner, permissionsOf } from '@/lib/access';
 
 import { TabBar } from './TabBar';
 
 const Tab = createBottomTabNavigator();
 
+interface TabSpec {
+  name: string;
+  permission: PermissionKey;
+  component: ComponentType<any>;
+  icon: ComponentType<{ color?: string; size?: number }>;
+}
+
 /**
- * Role-based tabs, rendered by the custom floating TabBar.
+ * Restaurant tabs, in the order they appear.
  *
- * Branches on the SERVER-derived effective role rather than `user.role`,
- * because every restaurant employee is stored as role 'employee' and only
- * their designation distinguishes a waiter from the kitchen. General accounts
- * resolve to the same two shapes as before, so their tabs are unchanged.
+ * Kitchen is handled specially below — see the filter in MainTabs.
+ */
+const RESTAURANT_TABS: TabSpec[] = [
+  { name: 'Dashboard', permission: 'dashboard', component: RestaurantDashboardScreen, icon: LayoutGrid },
+  { name: 'Tables', permission: 'tables', component: WaiterScreen, icon: UtensilsCrossed },
+  { name: 'Cashier', permission: 'cashier', component: RestaurantCashierScreen, icon: Receipt },
+  { name: 'Kitchen', permission: 'kitchen', component: KitchenScreen, icon: ChefHat },
+  { name: 'Orders', permission: 'orders', component: RestaurantOrdersScreen, icon: ClipboardList },
+];
+
+const GENERAL_TABS: TabSpec[] = [
+  { name: 'Dashboard', permission: 'dashboard', component: DashboardScreen, icon: LayoutGrid },
+  { name: 'POS', permission: 'pos', component: POSScreen, icon: ShoppingCart },
+  { name: 'Orders', permission: 'orders', component: OrdersScreen, icon: Receipt },
+];
+
+/**
+ * Tabs built from the user's MODULES rather than their role.
+ *
+ * Every previous role branch falls out of this: a waiter holds only `tables`
+ * and gets Tables + More exactly as before, and an owner holds every module
+ * their account type has, which reproduces the owner tab bars. What is new is
+ * that a cashier granted the dashboard now gets a Dashboard tab without a
+ * further branch here.
+ *
+ * The set is naturally bounded — the widest is four tabs plus More — because
+ * modules like expenses and the catalogue live under More rather than in the
+ * tab bar.
  */
 export function MainTabs() {
   const { user } = useAuth();
-  const role = effectiveRoleOf(user);
   const isRestaurant = user?.accountType === 'restaurant';
+  const granted = permissionsOf(user);
+  const owner = isOwner(user);
 
   const screenOptions = {
     headerShown: false,
@@ -36,131 +72,33 @@ export function MainTabs() {
     animation: 'shift',
   } as const;
 
-  if (isRestaurant && role === 'waiter') {
-    return (
-      <Tab.Navigator tabBar={(props) => <TabBar {...props} />} screenOptions={screenOptions}>
-        <Tab.Screen
-          name="Tables"
-          component={WaiterScreen}
-          options={{ tabBarIcon: ({ color, size }) => <UtensilsCrossed color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="More"
-          component={MoreScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Menu color={color} size={size} /> }}
-        />
-      </Tab.Navigator>
-    );
-  }
-
-  if (isRestaurant && role === 'kitchen') {
-    return (
-      <Tab.Navigator tabBar={(props) => <TabBar {...props} />} screenOptions={screenOptions}>
-        <Tab.Screen
-          name="Kitchen"
-          component={KitchenScreen}
-          options={{ tabBarIcon: ({ color, size }) => <ChefHat color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="More"
-          component={MoreScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Menu color={color} size={size} /> }}
-        />
-      </Tab.Navigator>
-    );
-  }
-
-  if (isRestaurant && role === 'cashier') {
-    return (
-      <Tab.Navigator tabBar={(props) => <TabBar {...props} />} screenOptions={screenOptions}>
-        <Tab.Screen
-          name="Cashier"
-          component={RestaurantCashierScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Receipt color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="Orders"
-          component={RestaurantOrdersScreen}
-          options={{ tabBarIcon: ({ color, size }) => <ClipboardList color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="More"
-          component={MoreScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Menu color={color} size={size} /> }}
-        />
-      </Tab.Navigator>
-    );
-  }
-
-  if (role === 'restaurant_owner') {
-    return (
-      <Tab.Navigator tabBar={(props) => <TabBar {...props} />} screenOptions={screenOptions}>
-        <Tab.Screen
-          name="Dashboard"
-          component={RestaurantDashboardScreen}
-          options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="Tables"
-          component={WaiterScreen}
-          options={{ tabBarIcon: ({ color, size }) => <UtensilsCrossed color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="Cashier"
-          component={RestaurantCashierScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Receipt color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="Orders"
-          component={RestaurantOrdersScreen}
-          options={{ tabBarIcon: ({ color, size }) => <ClipboardList color={color} size={size} /> }}
-        />
-        <Tab.Screen
-          name="More"
-          component={MoreScreen}
-          options={{ tabBarIcon: ({ color, size }) => <Menu color={color} size={size} /> }}
-        />
-      </Tab.Navigator>
-    );
-  }
-
-  // General accounts — unchanged from before the restaurant work.
-  const isStoreOwner = role === 'store_owner';
+  const tabs = (isRestaurant ? RESTAURANT_TABS : GENERAL_TABS).filter((tab) => {
+    if (!granted.includes(tab.permission)) return false;
+    // An owner holds `kitchen` like every other module, but the kitchen
+    // display is a station screen, not something an owner works from. Keeping
+    // it out preserves the owner's existing four-tab bar; kitchen staff still
+    // get it, because it is their base module.
+    if (tab.permission === 'kitchen' && owner) return false;
+    return true;
+  });
 
   return (
     <Tab.Navigator tabBar={(props) => <TabBar {...props} />} screenOptions={screenOptions}>
-      {isStoreOwner ? (
+      {tabs.map((tab) => (
         <Tab.Screen
-          name="Dashboard"
-          component={DashboardScreen}
+          key={tab.name}
+          name={tab.name}
+          component={tab.component}
           options={{
-            tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} />,
+            tabBarIcon: ({ color, size }) => <tab.icon color={color} size={size} />,
           }}
         />
-      ) : null}
-
-      <Tab.Screen
-        name="POS"
-        component={POSScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => <ShoppingCart color={color} size={size} />,
-        }}
-      />
-
-      <Tab.Screen
-        name="Orders"
-        component={OrdersScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => <Receipt color={color} size={size} />,
-        }}
-      />
+      ))}
 
       <Tab.Screen
         name="More"
         component={MoreScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => <Menu color={color} size={size} />,
-        }}
+        options={{ tabBarIcon: ({ color, size }) => <Menu color={color} size={size} /> }}
       />
     </Tab.Navigator>
   );

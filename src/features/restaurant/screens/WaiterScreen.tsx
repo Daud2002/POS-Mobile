@@ -1,19 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Save, X, Plus, Minus } from 'lucide-react-native';
+import { Send, Save, X, Plus, Minus, ClipboardList, ChevronRight } from 'lucide-react-native';
 
 import { restaurantApi, productsApi, categoriesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
-import { Button, EmptyState, Input, SearchInput, Sheet, Text, useToast } from '@/components/ui';
+import { Button, EmptyState, Input, Sheet, Text, useToast } from '@/components/ui';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
 import { tint, useTheme } from '@/theme';
-import type { Decimal, RestaurantOrder, RestaurantTable } from '@/api/types';
+import type { Category, Decimal, Product, RestaurantOrder, RestaurantTable } from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 
 interface CartLine {
@@ -24,6 +24,15 @@ interface CartLine {
   notes?: string;
 }
 
+/**
+ * Waiter order entry.
+ *
+ * Deliberately category-first: the menu runs to 160+ items across 19
+ * categories, so a single flat grid is unusable on a phone. The waiter picks a
+ * table, taps a category, adds items in a sheet, closes it, and repeats — then
+ * reviews everything once before it goes to the kitchen. Only one category's
+ * items are ever mounted, which also keeps the screen light.
+ */
 export function WaiterScreen() {
   const theme = useTheme();
   const toast = useToast();
@@ -35,9 +44,8 @@ export function WaiterScreen() {
   const [appendTo, setAppendTo] = useState<RestaurantOrder | null>(null);
   const [editingDraft, setEditingDraft] = useState<RestaurantOrder | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string>('all');
-  const [cartOpen, setCartOpen] = useState(false);
+  const [openCategory, setOpenCategory] = useState<Category | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const tablesQuery = useQuery({
@@ -61,7 +69,6 @@ export function WaiterScreen() {
     enabled: !!storeId,
   });
 
-  // The menu is organised by category, so the picker filters by it.
   const categoriesQuery = useQuery({
     queryKey: queryKeys.categories(storeId ?? ''),
     queryFn: () => categoriesApi.list(storeId as string),
@@ -72,8 +79,8 @@ export function WaiterScreen() {
     queryClient.invalidateQueries({ queryKey: ['restaurant'] });
   }, [queryClient]);
 
-  // Table occupancy changes from other waiters and from the cashier settling,
-  // so this must be live or two waiters will fight over one table.
+  // Occupancy changes from other waiters and from the cashier settling, so
+  // this has to be live or two waiters will fight over the same table.
   const { connected } = useRealtime({
     events: [
       RealtimeEvents.tableUpdated,
@@ -87,30 +94,25 @@ export function WaiterScreen() {
   const tables = tablesQuery.data ?? [];
   const drafts = draftsQuery.data ?? [];
   const liveOrders = liveQuery.data ?? [];
-
   const allProducts = productsQuery.data ?? [];
   const categories = categoriesQuery.data ?? [];
 
-  const products = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return allProducts.filter((p) => {
-      if (activeCategory !== 'all' && p.categoryId !== activeCategory) return false;
-      return q ? p.name?.toLowerCase().includes(q) : true;
-    });
-  }, [allProducts, search, activeCategory]);
-
-  /** Counts per category, so an empty one is obvious before tapping it. */
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const p of allProducts) {
-      if (p.categoryId) counts.set(p.categoryId, (counts.get(p.categoryId) ?? 0) + 1);
+  /** Products bucketed by category, so opening one is a lookup not a scan. */
+  const productsByCategory = useMemo(() => {
+    const map = new Map<string, Product[]>();
+    for (const product of allProducts) {
+      const key = product.categoryId ?? 'uncategorised';
+      const bucket = map.get(key);
+      if (bucket) bucket.push(product);
+      else map.set(key, [product]);
     }
-    return counts;
+    return map;
   }, [allProducts]);
 
   const cartTotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  const addToCart = (product: { id: string; name: string; price: Decimal }) => {
+  const addToCart = (product: { id: string; name: string; price: Decimal }) =>
     setCart((prev) => {
       const found = prev.find((l) => l.productId === product.id);
       if (found) {
@@ -123,7 +125,6 @@ export function WaiterScreen() {
         { productId: product.id, name: product.name, price: toNumber(product.price), quantity: 1 },
       ];
     });
-  };
 
   const changeQty = (productId: string, delta: number) =>
     setCart((prev) =>
@@ -132,12 +133,16 @@ export function WaiterScreen() {
         .filter((l) => l.quantity > 0),
     );
 
+  const qtyOf = (productId: string) =>
+    cart.find((l) => l.productId === productId)?.quantity ?? 0;
+
   const reset = () => {
     setCart([]);
     setSelectedTable(null);
     setAppendTo(null);
     setEditingDraft(null);
-    setCartOpen(false);
+    setReviewOpen(false);
+    setOpenCategory(null);
   };
 
   const itemsPayload = () =>
@@ -186,7 +191,7 @@ export function WaiterScreen() {
       reset();
       refresh();
     } catch (error: any) {
-      // A 409 means another waiter claimed the table first. The cart is kept
+      // A 409 means another waiter claimed the table first. The cart survives
       // so the order can simply be re-aimed at a different table.
       toast.error(error?.message ?? 'Could not send the order');
       refresh();
@@ -208,14 +213,21 @@ export function WaiterScreen() {
         notes: item.notes ?? undefined,
       })),
     );
-    setCartOpen(true);
+    setReviewOpen(true);
   };
+
+  const destination = appendTo
+    ? `Adding to ${appendTo.tableName ?? 'order'}`
+    : selectedTable
+      ? `Table: ${selectedTable.name}`
+      : 'No table selected';
 
   return (
     <Screen scrollable refreshing={tablesQuery.isRefetching} onRefresh={refresh}>
       <View style={styles.stack}>
         <ConnectionBanner connected={connected} />
 
+        {/* ---------------------------------------------------- tables */}
         <Text variant="h2">Tables</Text>
         <View style={styles.tableGrid}>
           {tables.map((table) => {
@@ -229,26 +241,23 @@ export function WaiterScreen() {
                   if (free) {
                     setAppendTo(null);
                     setSelectedTable(selected ? null : table);
-                    if (!selected) setCartOpen(true);
                   } else if (live) {
-                    // Occupied: adding a round rather than starting an order.
+                    // Occupied: this becomes an extra round on the open order.
                     setAppendTo(live);
                     setEditingDraft(null);
                     setSelectedTable(null);
-                    setCart([]);
-                    setCartOpen(true);
                   }
                 }}
                 style={[
                   styles.tableCard,
                   {
                     borderRadius: theme.radius.md,
-                    borderColor: selected
+                    borderColor: selected || appendTo?.tableId === table.id
                       ? theme.colors.primary
                       : free
                         ? theme.colors.border
                         : tint(theme.colors.warning, 0.5),
-                    backgroundColor: selected
+                    backgroundColor: selected || appendTo?.tableId === table.id
                       ? tint(theme.colors.primary, 0.1)
                       : free
                         ? theme.colors.card
@@ -271,6 +280,7 @@ export function WaiterScreen() {
           <EmptyState title="No tables" description="The owner has not added any tables yet." />
         )}
 
+        {/* ---------------------------------------------------- drafts */}
         {drafts.length > 0 && (
           <>
             <Text variant="h2">Drafts</Text>
@@ -280,7 +290,7 @@ export function WaiterScreen() {
                   key={draft.id}
                   onPress={() => openDraft(draft)}
                   style={[
-                    styles.draftRow,
+                    styles.row,
                     { borderColor: theme.colors.border, borderRadius: theme.radius.md },
                   ]}
                 >
@@ -299,111 +309,159 @@ export function WaiterScreen() {
           </>
         )}
 
+        {/* ------------------------------------------------ categories */}
         <Text variant="h2">Menu</Text>
-        <SearchInput value={search} onChangeText={setSearch} placeholder="Search dishes…" />
+        <Text variant="caption" color="mutedForeground">{destination}</Text>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryRow}
-        >
-          <Pressable
-            onPress={() => setActiveCategory('all')}
-            style={[
-              styles.categoryPill,
-              {
-                borderRadius: theme.radius.full,
-                borderColor: activeCategory === 'all' ? theme.colors.primary : theme.colors.border,
-                backgroundColor:
-                  activeCategory === 'all' ? tint(theme.colors.primary, 0.1) : 'transparent',
-              },
-            ]}
-          >
-            <Text variant="caption">All ({allProducts.length})</Text>
-          </Pressable>
-          {categories.map((category) => (
-            <Pressable
-              key={category.id}
-              onPress={() => setActiveCategory(category.id)}
-              style={[
-                styles.categoryPill,
-                {
-                  borderRadius: theme.radius.full,
-                  borderColor:
-                    activeCategory === category.id ? theme.colors.primary : theme.colors.border,
-                  backgroundColor:
-                    activeCategory === category.id
-                      ? tint(theme.colors.primary, 0.1)
-                      : 'transparent',
-                },
-              ]}
-            >
-              <Text variant="caption">
-                {category.name} ({categoryCounts.get(category.id) ?? 0})
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+        <View style={{ gap: 8 }}>
+          {categories.map((category) => {
+            const count = productsByCategory.get(category.id)?.length ?? 0;
+            // Items already in the cart from this category, so the waiter can
+            // see at a glance where they have already ordered.
+            const chosen = cart.filter((line) =>
+              productsByCategory.get(category.id)?.some((p) => p.id === line.productId),
+            ).length;
 
-        {products.length === 0 && !productsQuery.isLoading && (
-          <Text variant="caption" color="mutedForeground">
-            No dishes in this category.
-          </Text>
+            return (
+              <Pressable
+                key={category.id}
+                onPress={() => setOpenCategory(category)}
+                style={[
+                  styles.row,
+                  {
+                    borderColor: chosen ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: chosen ? tint(theme.colors.primary, 0.06) : theme.colors.card,
+                    borderRadius: theme.radius.md,
+                  },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text variant="bodySemibold" numberOfLines={1}>{category.name}</Text>
+                  <Text variant="caption" color="mutedForeground" numberOfLines={1}>
+                    {count} item{count === 1 ? '' : 's'}
+                    {chosen ? ` · ${chosen} selected` : ''}
+                    {category.description ? ` · ${category.description}` : ''}
+                  </Text>
+                </View>
+                <ChevronRight size={18} color={theme.colors.mutedForeground} />
+              </Pressable>
+            );
+          })}
+        </View>
+        {categories.length === 0 && !categoriesQuery.isLoading && (
+          <EmptyState title="No menu yet" description="The owner has not added any categories." />
         )}
 
-        <View style={styles.productGrid}>
-          {products.map((product) => (
-            <Pressable
-              key={product.id}
-              onPress={() => { addToCart(product as any); setCartOpen(true); }}
-              style={[
-                styles.productCard,
-                { borderColor: theme.colors.border, borderRadius: theme.radius.md, backgroundColor: theme.colors.card },
-              ]}
-            >
-              <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
-              <Text variant="caption" color="mutedForeground">
-                {format(toNumber(product.price))}
-              </Text>
-            </Pressable>
-          ))}
+        {/* ------------------------------------- review, at the very end */}
+        <View style={{ gap: 8, paddingTop: 4 }}>
+          <Button
+            onPress={() => setReviewOpen(true)}
+            disabled={!cart.length}
+            icon={<ClipboardList size={16} color={theme.colors.primaryForeground} />}
+            label={
+              cart.length
+                ? `Review order · ${cartCount} item${cartCount === 1 ? '' : 's'} · ${format(cartTotal)}`
+                : 'Review order'
+            }
+          />
+          {cart.length > 0 && (
+            <Button
+              variant="ghost"
+              onPress={reset}
+              icon={<X size={16} color={theme.colors.mutedForeground} />}
+              label="Clear order"
+            />
+          )}
         </View>
       </View>
 
+      {/* ------------------------------------------ category item sheet */}
       <Sheet
-        open={cartOpen}
-        onClose={() => setCartOpen(false)}
-        title={appendTo ? 'Add a round' : editingDraft ? 'Edit draft' : 'New order'}
+        open={!!openCategory}
+        onClose={() => setOpenCategory(null)}
+        title={openCategory?.name ?? ''}
+        description={openCategory?.description}
+      >
+        <ScrollView style={{ maxHeight: 460 }}>
+          <View style={{ gap: 8 }}>
+            {(productsByCategory.get(openCategory?.id ?? '') ?? []).map((product) => {
+              const qty = qtyOf(product.id);
+              return (
+                <Pressable
+                  key={product.id}
+                  onPress={() => addToCart(product as any)}
+                  style={[
+                    styles.row,
+                    {
+                      borderColor: qty ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: qty ? tint(theme.colors.primary, 0.06) : theme.colors.card,
+                      borderRadius: theme.radius.md,
+                    },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
+                    <Text variant="caption" color="mutedForeground">
+                      {format(toNumber(product.price))}
+                    </Text>
+                  </View>
+
+                  {qty > 0 ? (
+                    <View style={styles.stepper}>
+                      <Pressable onPress={() => changeQty(product.id, -1)} hitSlop={8}>
+                        <Minus size={16} color={theme.colors.foreground} />
+                      </Pressable>
+                      <Text variant="bodySemibold">{qty}</Text>
+                      <Pressable onPress={() => changeQty(product.id, 1)} hitSlop={8}>
+                        <Plus size={16} color={theme.colors.foreground} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Plus size={18} color={theme.colors.mutedForeground} />
+                  )}
+                </Pressable>
+              );
+            })}
+
+            {(productsByCategory.get(openCategory?.id ?? '') ?? []).length === 0 && (
+              <Text variant="caption" color="mutedForeground">
+                No items in this category.
+              </Text>
+            )}
+          </View>
+        </ScrollView>
+      </Sheet>
+
+      {/* -------------------------------------------------- review sheet */}
+      <Sheet
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        title={appendTo ? 'Add a round' : editingDraft ? 'Edit draft' : 'Review order'}
+        description={destination}
       >
         <ScrollView style={{ maxHeight: 420 }}>
-          <Text variant="caption" color="mutedForeground">
-            {appendTo
-              ? `Adding to ${appendTo.tableName ?? 'order'} — the kitchen only sees the new items.`
-              : selectedTable
-                ? `Table: ${selectedTable.name}`
-                : 'Pick a free table, or save as a draft to send later.'}
-          </Text>
-
           {cart.length === 0 ? (
-            <Text variant="caption" color="mutedForeground" style={{ paddingVertical: 24 }}>
-              No items yet.
+            <Text variant="caption" color="mutedForeground" style={{ paddingVertical: 20 }}>
+              Nothing added yet.
             </Text>
           ) : (
-            <View style={{ gap: 12, paddingVertical: 12 }}>
+            <View style={{ gap: 12 }}>
               {cart.map((line) => (
                 <View key={line.productId} style={{ gap: 6 }}>
                   <View style={styles.cartRow}>
                     <View style={{ flex: 1 }}>
                       <Text variant="bodySemibold" numberOfLines={1}>{line.name}</Text>
-                      <Text variant="caption" color="mutedForeground">{format(line.price)}</Text>
+                      <Text variant="caption" color="mutedForeground">
+                        {format(line.price)} · {format(line.price * line.quantity)}
+                      </Text>
                     </View>
                     <View style={styles.stepper}>
-                      <Pressable onPress={() => changeQty(line.productId, -1)} style={styles.stepBtn}>
-                        <Minus size={14} color={theme.colors.foreground} />
+                      <Pressable onPress={() => changeQty(line.productId, -1)} hitSlop={8}>
+                        <Minus size={16} color={theme.colors.foreground} />
                       </Pressable>
                       <Text variant="bodySemibold">{line.quantity}</Text>
-                      <Pressable onPress={() => changeQty(line.productId, 1)} style={styles.stepBtn}>
-                        <Plus size={14} color={theme.colors.foreground} />
+                      <Pressable onPress={() => changeQty(line.productId, 1)} hitSlop={8}>
+                        <Plus size={16} color={theme.colors.foreground} />
                       </Pressable>
                     </View>
                   </View>
@@ -411,7 +469,9 @@ export function WaiterScreen() {
                     value={line.notes ?? ''}
                     onChangeText={(text) =>
                       setCart((prev) =>
-                        prev.map((l) => (l.productId === line.productId ? { ...l, notes: text } : l)),
+                        prev.map((l) =>
+                          l.productId === line.productId ? { ...l, notes: text } : l,
+                        ),
                       )
                     }
                     placeholder="Note for kitchen…"
@@ -421,7 +481,7 @@ export function WaiterScreen() {
             </View>
           )}
 
-          <View style={styles.totalRow}>
+          <View style={[styles.totalRow, { borderColor: theme.colors.border }]}>
             <Text variant="bodySemibold">Total</Text>
             <Text variant="bodySemibold">{format(cartTotal)}</Text>
           </View>
@@ -448,11 +508,6 @@ export function WaiterScreen() {
                 </Text>
               </>
             )}
-            {(cart.length > 0 || appendTo || editingDraft) && (
-              <Button variant="ghost" onPress={reset} icon={<X size={16} color={theme.colors.mutedForeground} />}
-                  label="Clear"
-                />
-            )}
           </View>
         </ScrollView>
       </Sheet>
@@ -464,19 +519,20 @@ const styles = StyleSheet.create({
   stack: { gap: 12 },
   tableGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tableCard: { width: '31%', borderWidth: 1, padding: 12, gap: 2 },
-  productGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  categoryRow: { flexDirection: 'row', gap: 8, paddingVertical: 2 },
-  categoryPill: { borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
-  productCard: { width: '48%', borderWidth: 1, padding: 12, gap: 4 },
-  draftRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderWidth: 1, padding: 12,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    padding: 12,
   },
   cartRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  stepBtn: { padding: 6 },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   totalRow: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: 12,
+    marginTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
 });
