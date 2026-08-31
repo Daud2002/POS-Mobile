@@ -244,3 +244,17 @@ export function query(params: Record<string, string | number | undefined>): stri
 }
 
 export const apiClient = new ApiClient();
+
+/**
+ * Absolute URL for a server-relative upload path (`/uploads/logo/x.png`).
+ *
+ * The store row holds a relative path on purpose — the API's public origin
+ * differs between a dev machine, an Android emulator (10.0.2.2) and
+ * production, so it cannot be baked in at upload time. The static mount lives
+ * UNDER the '/api' prefix, so the base URL is joined as-is rather than stripped.
+ */
+export function assetUrl(path?: string | null): string | undefined {
+  if (!path) return undefined;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}

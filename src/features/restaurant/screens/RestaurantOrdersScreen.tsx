@@ -12,7 +12,7 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { useDebouncedValue } from '@/hooks/useDebouncedCallback';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
-import { orderLabel } from '@/lib/orderLabel';
+import { orderDestination, orderLabel, orderStatusLabel } from '@/lib/orderLabel';
 import { tint, useTheme } from '@/theme';
 import type { RestaurantOrder } from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
@@ -20,7 +20,9 @@ import { ConnectionBanner } from '../components/ConnectionBanner';
 /** Full history, unlike the Cashier screen which only lists what is still open. */
 const FILTERS = [
   { key: 'all', label: 'All', statuses: undefined },
-  { key: 'open', label: 'Open', statuses: 'requested,preparing' },
+  // handed_over is still open: the food is out, but nobody has paid.
+  { key: 'open', label: 'Open', statuses: 'requested,preparing,handed_over' },
+  { key: 'ready', label: 'Ready to bill', statuses: 'handed_over' },
   { key: 'draft', label: 'Drafts', statuses: 'draft' },
   { key: 'completed', label: 'Completed', statuses: 'completed' },
   { key: 'cancelled', label: 'Cancelled', statuses: 'cancelled' },
@@ -93,6 +95,9 @@ export function RestaurantOrdersScreen() {
   const statusColor = (status: RestaurantOrder['orderStatus']) => {
     if (status === 'requested') return theme.colors.warning;
     if (status === 'preparing') return theme.colors.info;
+    // Cooked and on the floor — the cashier's cue, so it reads as ready
+    // rather than as another in-progress state.
+    if (status === 'handed_over') return theme.colors.success;
     if (status === 'completed') return theme.colors.success;
     if (status === 'cancelled') return theme.colors.destructive;
     return theme.colors.mutedForeground;
@@ -159,21 +164,27 @@ export function RestaurantOrdersScreen() {
                 <View style={styles.cardHead}>
                   <View style={{ flex: 1 }}>
                     <Text variant="bodySemibold" numberOfLines={1}>
-                      {orderLabel(order)} ·{' '}
-                      {order.tableName ??
-                        (order.orderType === 'delivery' ? 'Delivery' : 'Takeaway')}
+                      {orderLabel(order)} · {orderDestination(order)}
+                      {/* A dine-out order sits at a table, so the destination
+                          alone would not reveal that it also had a parcel. */}
+                      {order.orderType === 'dine_out' && order.tableName ? (
+                        <Text variant="caption" style={{ color: theme.colors.info }}>
+                          {'  '}dine-out
+                        </Text>
+                      ) : null}
                     </Text>
                     <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                       {order.waiterName ?? '—'} · {new Date(order.createdAt).toLocaleString()}
+                      {order.settledByName ? ` · paid to ${order.settledByName}` : ''}
                     </Text>
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 2 }}>
                     <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>
                     <Text
                       variant="caption"
-                      style={{ color: statusColor(order.orderStatus), textTransform: 'capitalize' }}
+                      style={{ color: statusColor(order.orderStatus) }}
                     >
-                      {order.orderStatus}
+                      {orderStatusLabel(order.orderStatus)}
                     </Text>
                   </View>
                   <ChevronDown
@@ -189,6 +200,11 @@ export function RestaurantOrdersScreen() {
                       <View key={item.id} style={styles.itemRow}>
                         <Text variant="body" style={{ flex: 1 }}>
                           {item.quantity} × {item.productName}
+                          {item.isParcel ? (
+                            <Text variant="caption" style={{ color: theme.colors.info }}>
+                              {'  '}(parcel)
+                            </Text>
+                          ) : null}
                           {item.notes ? (
                             <Text variant="caption" style={{ color: theme.colors.warning }}>
                               {'  '}— {item.notes}

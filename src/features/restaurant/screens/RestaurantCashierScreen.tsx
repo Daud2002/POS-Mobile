@@ -3,7 +3,7 @@ import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Printer, Receipt, Ban, Plus, Minus } from 'lucide-react-native';
 
-import { restaurantApi, storesApi, productsApi, categoriesApi } from '@/api/services';
+import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
 import { Button, EmptyState, Input, SearchInput, Sheet, Text, useToast } from '@/components/ui';
@@ -12,20 +12,30 @@ import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
-import { orderLabel } from '@/lib/orderLabel';
+import { orderDestination, orderLabel, orderStatusLabel } from '@/lib/orderLabel';
 import { parseDiscountInput, previewDiscount } from '@/lib/discount';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { receiptFromRestaurantOrder } from '@/features/printing/templates/receiptFromOrder';
 import { tint, useTheme } from '@/theme';
 import type { Decimal, RestaurantOrder } from '@/api/types';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 
 const PAYMENT_METHODS = ['cash', 'card', 'online'] as const;
+
+/** Open orders, most-ready first. */
+const STATUS_PRIORITY: Record<string, number> = {
+  handed_over: 0,
+  preparing: 1,
+  requested: 2,
+  draft: 3,
+};
 
 export function RestaurantCashierScreen() {
   const theme = useTheme();
   const toast = useToast();
   const storeId = useStoreId();
+  const { user } = useAuth();
   const { format, currency } = useStoreCurrency();
   const queryClient = useQueryClient();
   const { printReceipt } = usePrinter();
@@ -34,6 +44,17 @@ export function RestaurantCashierScreen() {
   const [discountText, setDiscountText] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<string>('cash');
   const [settling, setSettling] = useState(false);
+
+  /**
+   * The open-drawer gate. Opening and closing a shift lives on the My Shift
+   * tab now; the till only needs to know whether settling is allowed.
+   */
+  const shiftQuery = useQuery({
+    queryKey: queryKeys.currentShift(),
+    queryFn: () => shiftsApi.current(),
+    enabled: !!user?.shiftsEnabled,
+  });
+  const shift = shiftQuery.data ?? null;
 
   // Takeaway / delivery composer — the cashier's own order entry.
   const [composerOpen, setComposerOpen] = useState(false);
@@ -48,7 +69,18 @@ export function RestaurantCashierScreen() {
 
   const ordersQuery = useQuery({
     queryKey: queryKeys.restaurantOrders('open'),
-    queryFn: () => restaurantApi.listOrders({ orderStatus: 'requested,preparing,draft' }),
+    queryFn: () =>
+      restaurantApi
+        .listOrders({ orderStatus: 'requested,preparing,handed_over,draft' })
+        // Handed-over orders first: the food is out and the guests are ready
+        // to pay, so sinking them below tickets the kitchen has not started
+        // is backwards for the person holding the card machine.
+        .then((rows) =>
+          [...rows].sort(
+            (a, b) =>
+              (STATUS_PRIORITY[a.orderStatus] ?? 9) - (STATUS_PRIORITY[b.orderStatus] ?? 9),
+          ),
+        ),
   });
 
   const storeQuery = useQuery({
@@ -249,13 +281,18 @@ export function RestaurantCashierScreen() {
             >
               <View style={{ flex: 1 }}>
                 <Text variant="bodySemibold" numberOfLines={1}>
-                  {order.tableName ??
-                    (order.orderType === 'delivery' ? 'Delivery' : 'Takeaway')}
+                  {orderDestination(order)}
                   {order.customerName ? ` · ${order.customerName}` : ''}
+                  {/* The kitchen is done — this is the one to reach for next. */}
+                  {order.orderStatus === 'handed_over' ? (
+                    <Text variant="caption" style={{ color: theme.colors.success }}>
+                      {'  '}Ready to bill
+                    </Text>
+                  ) : null}
                 </Text>
                 <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                   {orderLabel(order)} · {order.waiterName ?? 'Unknown'} ·{' '}
-                  {order.items?.length ?? 0} items · {order.orderStatus}
+                  {order.items?.length ?? 0} items · {orderStatusLabel(order.orderStatus)}
                 </Text>
               </View>
               <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>
@@ -267,10 +304,7 @@ export function RestaurantCashierScreen() {
       <Sheet
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={
-          selected?.tableName ??
-          (selected?.orderType === 'delivery' ? 'Delivery' : 'Takeaway')
-        }
+        title={selected ? orderDestination(selected) : ''}
       >
         {selected && (
           <ScrollView style={{ maxHeight: 460 }}>
@@ -351,13 +385,24 @@ export function RestaurantCashierScreen() {
               <Button
                 onPress={settle}
                 loading={settling}
-                disabled={selected.orderStatus === 'draft'}
+                disabled={
+                  selected.orderStatus === 'draft' ||
+                  // The server rejects this too; disabling here is only so the
+                  // cashier is told why before they try.
+                  (!!user?.shiftsEnabled && !shift)
+                }
                 icon={<Printer size={16} color={theme.colors.primaryForeground} />}
                   label="Print receipt & settle"
                 />
               {selected.orderStatus === 'draft' && (
                 <Text variant="caption" color="mutedForeground">
                   This is still a draft. A waiter must send it to the kitchen first.
+                </Text>
+              )}
+              {!!user?.shiftsEnabled && !shift && selected.orderStatus !== 'draft' && (
+                <Text variant="caption" style={{ color: theme.colors.warning }}>
+                  Open your shift on the My Shift tab first — payments have to be
+                  counted against a drawer.
                 </Text>
               )}
               {selected.tableName ? (

@@ -10,11 +10,12 @@ import {
   Sun,
 } from 'lucide-react-native';
 import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { effectiveRoleOf } from '@/lib/roles';
+import { assetUrl } from '@/api/client';
 import { Screen } from '@/components/layout/Screen';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Avatar } from '@/components/ui/Avatar';
@@ -86,6 +87,39 @@ export function SettingsScreen() {
             </Text>
           </View>
         </View>
+
+        {/*
+          Which store this device is signed into — the quickest confirmation on
+          a shared handset. Read-only here: uploading a logo needs an image
+          picker, which would require adding expo-image-picker and a native
+          rebuild, so it stays a web-only action for now.
+        */}
+        {user?.storeName ? (
+          <View
+            style={[
+              styles.storeRow,
+              { borderTopColor: theme.colors.border, marginTop: theme.spacing.lg },
+            ]}
+          >
+            {user.logoUrl ? (
+              <Image
+                source={{ uri: assetUrl(user.logoUrl) }}
+                style={styles.logo}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={[styles.logo, { backgroundColor: theme.colors.muted }]} />
+            )}
+            <View style={{ flex: 1 }}>
+              <Text variant="smallMedium" numberOfLines={1}>
+                {user.storeName}
+              </Text>
+              <Text variant="caption" color="mutedForeground">
+                {user.accountType === 'restaurant' ? 'Restaurant' : 'Store'}
+              </Text>
+            </View>
+          </View>
+        ) : null}
       </Card>
 
       <View style={{ gap: theme.spacing.md }}>
@@ -179,6 +213,14 @@ export function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  storeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 12,
+  },
+  logo: { width: 36, height: 36, borderRadius: 8 },
   profile: { flexDirection: 'row', alignItems: 'center' },
   themeHeader: { flexDirection: 'row', alignItems: 'center' },
 });

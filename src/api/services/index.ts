@@ -6,4 +6,5 @@ export { expensesApi } from './expenses.api';
 export { ordersApi } from './orders.api';
 export { productsApi } from './products.api';
 export { restaurantApi } from './restaurant.api';
+export { shiftsApi } from './shifts.api';
 export { storesApi } from './stores.api';

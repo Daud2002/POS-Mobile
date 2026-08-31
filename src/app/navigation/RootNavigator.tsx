@@ -16,6 +16,9 @@ import { ProductsScreen } from '@/features/products/screens/ProductsScreen';
 import { ReportsScreen } from '@/features/reports/screens/ReportsScreen';
 import { ChangePasswordScreen } from '@/features/settings/screens/ChangePasswordScreen';
 import { SettingsScreen } from '@/features/settings/screens/SettingsScreen';
+import { CashiersScreen } from '@/features/shifts/screens/CashiersScreen';
+import { ShiftsScreen } from '@/features/shifts/screens/ShiftsScreen';
+import { ShiftDetailScreen } from '@/features/shifts/screens/ShiftDetailScreen';
 import { LoginScreen } from '@/features/auth/screens/LoginScreen';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -133,6 +136,22 @@ export function RootNavigator() {
             name="Expenses"
             component={ExpensesScreen}
             options={{ title: 'Expenses' }}
+          />
+
+          <Stack.Screen
+            name="Cashiers"
+            component={CashiersScreen}
+            options={{ title: 'Cashiers' }}
+          />
+          <Stack.Screen
+            name="Shifts"
+            component={ShiftsScreen}
+            options={({ route }) => ({ title: route.params?.name ?? 'Shifts' })}
+          />
+          <Stack.Screen
+            name="ShiftDetail"
+            component={ShiftDetailScreen}
+            options={{ title: 'Shift' }}
           />
 
           <Stack.Screen

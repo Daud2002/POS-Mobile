@@ -1,6 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
-  ChefHat, ClipboardList, LayoutGrid, Menu, Receipt, ShoppingCart, UtensilsCrossed,
+  ChefHat, ClipboardList, LayoutGrid, Menu, Receipt, ShoppingCart, UtensilsCrossed, Wallet,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
 
@@ -15,6 +15,7 @@ import { KitchenScreen } from '@/features/restaurant/screens/KitchenScreen';
 import { RestaurantCashierScreen } from '@/features/restaurant/screens/RestaurantCashierScreen';
 import { RestaurantDashboardScreen } from '@/features/restaurant/screens/RestaurantDashboardScreen';
 import { RestaurantOrdersScreen } from '@/features/restaurant/screens/RestaurantOrdersScreen';
+import { CashierDashboardScreen } from '@/features/shifts/screens/CashierDashboardScreen';
 import { isOwner, permissionsOf } from '@/lib/access';
 
 import { TabBar } from './TabBar';
@@ -35,6 +36,15 @@ interface TabSpec {
  */
 const RESTAURANT_TABS: TabSpec[] = [
   { name: 'Dashboard', permission: 'dashboard', component: RestaurantDashboardScreen, icon: LayoutGrid },
+  /**
+   * The cashier's OWN dashboard — only what they collected.
+   *
+   * A separate tab rather than swapping the Dashboard tab's component: an
+   * owner holds `cashier` too, so reusing the name would give them two tabs
+   * called Dashboard, and two Tab.Screens sharing a name crash
+   * react-navigation. Filtered to non-owners below.
+   */
+  { name: 'MyShift', permission: 'cashier', component: CashierDashboardScreen, icon: Wallet },
   { name: 'Tables', permission: 'tables', component: WaiterScreen, icon: UtensilsCrossed },
   { name: 'Cashier', permission: 'cashier', component: RestaurantCashierScreen, icon: Receipt },
   { name: 'Kitchen', permission: 'kitchen', component: KitchenScreen, icon: ChefHat },
@@ -79,6 +89,8 @@ export function MainTabs() {
     // it out preserves the owner's existing four-tab bar; kitchen staff still
     // get it, because it is their base module.
     if (tab.permission === 'kitchen' && owner) return false;
+    // The owner has the full dashboard; the per-cashier one is for staff.
+    if (tab.name === 'MyShift' && owner) return false;
     return true;
   });
 

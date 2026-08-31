@@ -23,6 +23,12 @@ export type RootStackParamList = {
   Reports: undefined;
   Expenses: undefined;
 
+  // Cashier shifts (owner). `Shifts` narrows to one cashier when pushed from
+  // the Cashiers summary.
+  Cashiers: undefined;
+  Shifts: { userId?: string; name?: string } | undefined;
+  ShiftDetail: { shiftId: string };
+
   // Settings
   Settings: undefined;
   PrinterSetup: undefined;

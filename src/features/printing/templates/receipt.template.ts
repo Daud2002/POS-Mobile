@@ -26,6 +26,17 @@ export interface ReceiptData {
   customerName?: string;
   /** 'Store Owner' or the employee's name. */
   dispatchedBy: string;
+  /**
+   * Dine-in / dine-out / takeaway / delivery, already written for people.
+   * Printed as its own row so a dine-out bill is distinguishable from a plain
+   * dine-in one — which is exactly what the customer is paying for.
+   */
+  orderTypeLabel?: string;
+  /** Table name, when the order is seated. */
+  tableName?: string | null;
+  /** Printed for the rider on delivery orders. */
+  customerPhone?: string | null;
+  deliveryAddress?: string | null;
   items: Array<{
     name: string;
     quantity: number;
@@ -33,6 +44,8 @@ export interface ReceiptData {
     /** Line total discount. */
     discount: number;
     total: number;
+    /** Packed to go, on a dine-out order that also eats in. */
+    isParcel?: boolean;
   }>;
   /** Σ price × qty, before discounts — matches what the web receipt prints. */
   rawSubtotal: number;
@@ -45,20 +58,220 @@ export interface ReceiptData {
   isReprint?: boolean;
 }
 
-/** Column widths for the item table, derived from the paper width. */
-function itemColumns(charsPerLine: number): {
-  name: number;
-  qty: number;
-  amount: number;
-} {
-  // 58 mm (32 cols): 16 / 5 / 11 — the exact layout the web app uses.
-  if (charsPerLine <= 32) return { name: 16, qty: 5, amount: 11 };
-  // 80 mm (48 cols): more room for the product name.
-  return { name: 28, qty: 6, amount: 14 };
+/**
+ * Box drawing, with the real line characters.
+ *
+ * Safe here because the pipeline controls both ends: init() selects the
+ * profile's code page (CP437 by default) with ESC t, and encodeText maps each
+ * of these Unicode characters to the single CP437 byte whose glyph is a solid
+ * line. ASCII "+-|" would survive any code page but visibly is not a line —
+ * which is exactly what made the receipt look home-made.
+ */
+const H = '\u2500'; // ─
+const V_RULE = '\u2502'; // │
+const TL = '\u250c'; // ┌
+const TR = '\u2510'; // ┐
+const BL = '\u2514'; // └
+const BR = '\u2518'; // ┘
+const TEE_L = '\u251c'; // ├
+const TEE_R = '\u2524'; // ┤
+const TEE_D = '\u252c'; // ┬
+const TEE_U = '\u2534'; // ┴
+const CROSS = '\u253c'; // ┼
+
+type RuleEdge = 'top' | 'mid' | 'bottom';
+
+/** Character positions of the junctions a column layout puts on a rule. */
+function junctionsOf(cols?: FrameColumn[]): Set<number> {
+  const out = new Set<number>();
+  if (!cols) return out;
+  let x = 0;
+  for (let i = 0; i < cols.length - 1; i += 1) {
+    x += cols[i].width + 1;
+    out.add(x);
+  }
+  return out;
+}
+
+interface FrameColumn {
+  width: number;
+  align?: 'left' | 'right';
+}
+
+/**
+ * Item-table columns, sized so the vertical rules fit the paper exactly.
+ *
+ * 58mm paper DROPS the unit-rate column. Squeezing five columns into 32
+ * characters leaves the dish name 8 characters and abbreviates the headings to
+ * "Rat" and "Amo" — unreadable. The rate is derivable from qty and amount,
+ * whereas a mangled dish name is simply lost, so the name wins the space.
+ */
+function itemColumns(charsPerLine: number): { cols: FrameColumn[]; showRate: boolean } {
+  if (charsPerLine >= 48) {
+    // 80 mm: No(3) Item(18) Qty(6) Rate(7) Amount(8) + 6 rules = 48
+    return {
+      showRate: true,
+      cols: [
+        { width: 3 },
+        { width: 18 },
+        { width: 6, align: 'right' },
+        { width: 7, align: 'right' },
+        { width: 8, align: 'right' },
+      ],
+    };
+  }
+  // 58 mm: No(3) Item(13) Qty(4) Amount(7) + 5 rules = 32
+  return {
+    showRate: false,
+    cols: [
+      { width: 3 },
+      { width: 13 },
+      { width: 4, align: 'right' },
+      { width: 7, align: 'right' },
+    ],
+  };
+}
+
+/**
+ * A horizontal rule that KNOWS what it sits between.
+ *
+ * The junction glyph at each column boundary depends on whether the boundary
+ * continues above, below, or both — ┬ entering a table, ┼ inside it, ┴ leaving
+ * it. Drawing every junction the same way is what makes an ASCII frame look
+ * home-made; this is the detail that makes the table read as one printed form.
+ */
+function boxRule(
+  width: number,
+  opts: { above?: FrameColumn[]; below?: FrameColumn[]; edge?: RuleEdge } = {},
+): string {
+  const edge = opts.edge ?? 'mid';
+  const above = junctionsOf(opts.above);
+  const below = junctionsOf(opts.below);
+
+  const chars: string[] = new Array(width).fill(H);
+  chars[0] = edge === 'top' ? TL : edge === 'bottom' ? BL : TEE_L;
+  chars[width - 1] = edge === 'top' ? TR : edge === 'bottom' ? BR : TEE_R;
+
+  for (let i = 1; i < width - 1; i += 1) {
+    const up = above.has(i);
+    const down = below.has(i);
+    if (up && down) chars[i] = CROSS;
+    else if (down) chars[i] = TEE_D;
+    else if (up) chars[i] = TEE_U;
+  }
+
+  return chars.join('');
+}
+
+/** One cell, padded to exactly `width` with a gutter so text clears the rule. */
+function cell(text: string, width: number, align: 'left' | 'right' = 'left'): string {
+  const room = Math.max(1, width - 1);
+  let value = String(text ?? '');
+  if (value.length > room) value = value.slice(0, room);
+  return align === 'right' ? value.padStart(room) + ' ' : ' ' + value.padEnd(room);
+}
+
+function tableRow(cols: FrameColumn[], values: string[]): string {
+  return (
+    V_RULE + cols.map((c, i) => cell(values[i] ?? '', c.width, c.align)).join(V_RULE) + V_RULE
+  );
+}
+
+function framed(width: number, text = ''): string {
+  return V_RULE + cell(text, width - 2) + V_RULE;
+}
+
+/** A framed line whose text is right-aligned. */
+function framedRight(width: number, text: string): string {
+  return V_RULE + cell(text, width - 2, 'right') + V_RULE;
+}
+
+/**
+ * A framed line with text pushed to both edges.
+ *
+ * Returns TWO stacked rows when the pair cannot fit side by side. A single row
+ * would otherwise have to grow past the paper width, and one over-long row is
+ * what tears the whole frame open — 58mm paper with a long order number and a
+ * full timestamp hits this immediately.
+ */
+function framedSplit(width: number, left: string, right: string): string[] {
+  const room = width - 2;
+  if (!right) return [framed(width, left)];
+  if (left.length + right.length + 3 <= room) {
+    const gap = room - left.length - right.length - 2;
+    return [V_RULE + ' ' + left + ' '.repeat(gap) + right + ' ' + V_RULE];
+  }
+  return [framed(width, left), framedRight(width, right)];
+}
+
+/** Writes however many rows a split needed. */
+function writeSplit(builder: EscPosBuilder, width: number, left: string, right: string): void {
+  for (const line of framedSplit(width, left, right)) builder.line(line);
+}
+
+/**
+ * A framed row whose right-hand value is printed double size, degrading to
+ * normal size when it cannot fit doubled. Emphasis is worth losing; the
+ * border is not.
+ */
+function writeBig(
+  builder: EscPosBuilder,
+  width: number,
+  left: string,
+  big: string,
+): void {
+  const room = width - 2;
+  if (left.length + big.length * 2 + 3 > room) {
+    writeSplit(builder, width, left, big);
+    return;
+  }
+  const gap = room - left.length - big.length * 2 - 2;
+  builder.text(V_RULE + ' ' + left + ' '.repeat(gap));
+  builder.bold(true).size(2, 2).text(big).size(1, 1).bold(false);
+  builder.line(' ' + V_RULE);
+}
+
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * "30-Aug-2026 9:09 PM".
+ *
+ * Spelled out rather than a locale format, which renders 8/30/2026 in one
+ * locale and 30/8/2026 in another — on a printed bill that ambiguity is a
+ * dispute waiting to happen.
+ */
+function receiptStamp(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = date.getHours();
+  const h12 = hours % 12 === 0 ? 12 : hours % 12;
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${day}-${MONTHS[date.getMonth()]}-${date.getFullYear()} ${h12}:${minutes} ${hours < 12 ? 'AM' : 'PM'}`;
+}
+
+/**
+ * Money for a narrow table column: grouped, and without the currency symbol,
+ * which is stated once in the totals rather than on every line.
+ */
+function plain(amount: number): string {
+  const n = Number(amount) || 0;
+  return Number.isInteger(n)
+    ? n.toLocaleString('en-US')
+    : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /**
  * Renders a receipt to ESC/POS bytes.
+ *
+ * Built as a bordered document rather than a stream of left/right rows: an
+ * itemised bill is a TABLE, and printing it as loose lines is what made the
+ * old receipt hard to read. Quantity, rate and amount sit in fixed columns
+ * under headings, so the eye can run down a price without re-reading the line.
+ *
+ * Matches the web receipt character for character, so a customer cannot tell
+ * which device served them.
  *
  * Pure and side-effect free — this is what makes the layout unit-testable and
  * lets the on-screen preview show exactly what will print.
@@ -69,96 +282,138 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
     codepage: profile.codepage,
   });
 
+  const width = profile.charsPerLine;
+  const { cols, showRate } = itemColumns(width);
   const money = (amount: number) => formatCurrency(amount, data.currency);
-  const cols = itemColumns(profile.charsPerLine);
 
   builder.init();
 
-  // --- Header -------------------------------------------------------------
+  // --- Header --------------------------------------------------------------
+  // No logo: the ESC/POS builder has no raster support, and decoding a PNG to
+  // a 1-bit bitmap is not something React Native can do without a native
+  // image library. The web till prints the logo; here the name stands in.
   builder.align('center').bold(true).size(2, 2);
   builder.line(data.store.name.toUpperCase());
   builder.size(1, 1).bold(false);
 
+  if (data.store.phone) builder.line(`Phone: ${data.store.phone}`);
   if (data.store.address) builder.wrapped(data.store.address);
-  if (data.store.phone) builder.line(`Tel: ${data.store.phone}`);
 
   if (data.isReprint) {
-    builder.newline().bold(true).line('*** REPRINT ***').bold(false);
+    builder.bold(true).line('*** REPRINT ***').bold(false);
   }
 
-  builder.align('left').newline();
+  builder.align('left');
+  builder.line(boxRule(width, { edge: 'top' }));
 
-  // --- Order meta ---------------------------------------------------------
-  builder.divider();
-  builder.row('INVOICE #:', orderNumberLabel(data.invoiceNumber));
-  builder.row('DATE:', `${receiptDate(data.date)} ${timeLabel(data.date)}`);
-  builder.row('CUSTOMER:', data.customerName || 'Walk-in');
-  builder.row('DISPATCH BY:', data.dispatchedBy);
-  builder.divider();
+  // --- Invoice number and when ---------------------------------------------
+  writeSplit(builder, width, orderNumberLabel(data.invoiceNumber), receiptStamp(data.date));
+  builder.line(boxRule(width));
 
-  // --- Items --------------------------------------------------------------
-  builder.columns([
-    { text: 'ITEM', width: cols.name },
-    { text: 'QTY', width: cols.qty },
-    { text: 'AMOUNT', width: cols.amount, align: 'right' },
-  ]);
-  builder.divider();
+  // --- The number the customer is called by, printed big --------------------
+  builder.line(framed(width, 'Customer Copy'));
 
-  for (const item of data.items) {
+  writeBig(builder, width, 'Order Number:', String(data.invoiceNumber ?? '').replace(/^#/, ''));
+
+  builder.line(boxRule(width));
+
+  // --- Where it is going ----------------------------------------------------
+  if (data.orderTypeLabel) builder.line(framed(width, data.orderTypeLabel));
+  if (data.tableName || data.customerName || data.dispatchedBy) {
+    writeSplit(
+      builder,
+      width,
+      data.tableName ? `Table No: ${data.tableName}` : (data.customerName || 'Walk-in'),
+      data.dispatchedBy ? `Served by: ${data.dispatchedBy}` : '',
+    );
+  }
+  if (data.tableName && data.customerName) {
+    builder.line(framed(width, data.customerName));
+  }
+  /**
+   * Delivery details, on the bill itself: the rider works from this paper, so
+   * the name, phone and address have to be on it — a delivery receipt without
+   * them is only half a document.
+   */
+  if (data.customerPhone) {
+    builder.line(framed(width, `Phone: ${data.customerPhone}`));
+  }
+  if (data.deliveryAddress) {
+    for (const line of wrapName(`Deliver to: ${data.deliveryAddress}`, width - 4)) {
+      builder.line(framed(width, line));
+    }
+  }
+
+  // --- Items ----------------------------------------------------------------
+  builder.line(boxRule(width, { below: cols }));
+  builder.bold(true).line(
+    tableRow(
+      cols,
+      showRate
+        ? ['No', 'Item Description', 'Qty', 'Rate', 'Amount']
+        : ['No', 'Item Description', 'Qty', 'Amount'],
+    ),
+  );
+  builder.bold(false).line(boxRule(width, { above: cols, below: cols }));
+
+  let count = 0;
+  data.items.forEach((item, index) => {
+    count += Number(item.quantity) || 0;
     const lineTotal = item.unitPrice * item.quantity;
 
-    // Long names wrap onto continuation lines instead of being truncated to
-    // 15 characters the way the web version does.
-    const [firstLine, ...restLines] = wrapName(item.name, cols.name);
+    // Long names wrap onto continuation rows inside the frame, instead of
+    // being truncated the way the old layout did.
+    const [first, ...rest] = wrapName(item.name, cols[1].width - 1);
 
-    const row: Column[] = [
-      { text: firstLine, width: cols.name },
-      { text: String(item.quantity), width: cols.qty },
-      { text: money(lineTotal), width: cols.amount, align: 'right' },
-    ];
-    builder.columns(row);
-
-    for (const continuation of restLines) {
-      builder.columns([{ text: continuation, width: cols.name }]);
+    builder.line(
+      tableRow(
+        cols,
+        showRate
+          ? [String(index + 1), first, String(item.quantity), plain(item.unitPrice), plain(lineTotal)]
+          : [String(index + 1), first, String(item.quantity), plain(lineTotal)],
+      ),
+    );
+    for (const continuation of rest) {
+      builder.line(tableRow(cols, ['', continuation]));
     }
-
+    // So the customer can see which of their items were packed to go.
+    if (item.isParcel) builder.line(tableRow(cols, ['', '(parcel)']));
     if (item.discount > 0) {
-      builder.columns([
-        { text: '  less discount', width: cols.name + cols.qty },
-        { text: `-${money(item.discount)}`, width: cols.amount, align: 'right' },
-      ]);
+      const discountRow = showRate
+        ? ['', 'less discount', '', '', `-${plain(item.discount)}`]
+        : ['', 'less discount', '', `-${plain(item.discount)}`];
+      builder.line(tableRow(cols, discountRow));
     }
-  }
+  });
 
-  // --- Totals -------------------------------------------------------------
-  builder.divider();
-  builder.row('SUBTOTAL:', money(data.rawSubtotal));
+  builder.line(boxRule(width, { above: cols }));
+
+  // --- Totals ---------------------------------------------------------------
+  writeSplit(builder, width, `Items: ${count}`, money(data.rawSubtotal));
 
   if (data.totalDiscount > 0) {
-    builder.row('DISCOUNT:', `- ${money(data.totalDiscount)}`);
+    writeSplit(builder, width, 'Discount', `- ${money(data.totalDiscount)}`);
   }
 
   // Tax is 0 on web (the 8% line is commented out) and is never printed there.
   // Printing it only when non-zero keeps parity while supporting real tax.
   if (data.tax > 0) {
-    builder.row('TAX:', money(data.tax));
+    writeSplit(builder, width, 'Tax', money(data.tax));
   }
 
-  builder.bold(true).size(1, 2);
-  builder.row('TOTAL:', money(data.total));
-  builder.size(1, 1).bold(false);
+  builder.line(boxRule(width));
+
+  writeBig(builder, width, 'PAYABLE', money(data.total));
 
   if (data.paymentMethod) {
-    builder.row('PAYMENT:', data.paymentMethod.toUpperCase());
+    builder.line(boxRule(width));
+    builder.line(framed(width, `Paid by: ${data.paymentMethod.toUpperCase()}`));
   }
+  builder.line(boxRule(width, { edge: 'bottom' }));
 
-  builder.divider();
-
-  // --- Footer -------------------------------------------------------------
+  // --- Footer ---------------------------------------------------------------
   builder.newline().align('center');
-  builder.line('** THANK YOU! **');
-  builder.line('Visit Again :)');
-  builder.newline();
+  builder.bold(true).line('Thank you for visiting!').bold(false);
   builder.line('tapntrade.store');
   builder.align('left');
 

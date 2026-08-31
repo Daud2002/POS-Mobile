@@ -74,7 +74,11 @@ export const restaurantApi = {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items });
   },
 
-  setStatus(id: string, orderStatus: 'preparing' | 'completed') {
+  /**
+   * The kitchen's two moves. 'completed' is deliberately not offered: it means
+   * paid and table freed, which only settling may do.
+   */
+  setStatus(id: string, orderStatus: 'preparing' | 'handed_over') {
     return apiClient.patch<RestaurantOrder>(`/restaurant/orders/${id}/status`, { orderStatus });
   },
 

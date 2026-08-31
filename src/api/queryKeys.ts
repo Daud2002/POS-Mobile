@@ -36,4 +36,16 @@ export const queryKeys = {
   restaurantOrders: (filter?: string) => ['restaurant', 'orders', filter ?? 'all'] as const,
   restaurantOrder: (id: string) => ['restaurant', 'order', id] as const,
   restaurantReport: (range: string) => ['restaurant', 'report', range] as const,
+
+  /**
+   * Cashier shifts. Deliberately under the 'restaurant' prefix so the existing
+   * `invalidateQueries({ queryKey: ['restaurant'] })` after settling an order
+   * refreshes the till header too.
+   */
+  currentShift: () => ['restaurant', 'shift', 'current'] as const,
+  myShifts: () => ['restaurant', 'shifts', 'mine'] as const,
+  shifts: (filter?: string) => ['restaurant', 'shifts', filter ?? 'all'] as const,
+  shift: (id: string) => ['restaurant', 'shift', id] as const,
+  cashierDashboard: (range: string) => ['restaurant', 'shift', 'dashboard', range] as const,
+  cashierSummary: (range: string) => ['restaurant', 'shifts', 'summary', range] as const,
 } as const;

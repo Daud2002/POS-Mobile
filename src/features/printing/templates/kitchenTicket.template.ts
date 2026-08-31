@@ -1,5 +1,6 @@
 import { timeLabel } from '@/lib/date';
 import { orderNumberLabel } from '@/lib/format';
+import { orderTypeLabel } from '@/lib/orderLabel';
 
 import { EscPosBuilder } from '../escpos/builder';
 import { PrinterProfile } from '../types';
@@ -24,6 +25,8 @@ export interface KitchenTicketData {
     name: string;
     quantity: number;
     notes?: string | null;
+    /** Pack this line to go, on a dine_out order that also eats in. */
+    isParcel?: boolean;
   }>;
   /**
    * Set for a second or later round so the kitchen can tell an addition from
@@ -52,10 +55,16 @@ export function buildKitchenTicket(
 
   // The destination is the single most important line on the ticket.
   builder.bold(true).size(2, 2);
-  builder.line(
-    data.tableName ?? (data.orderType === 'delivery' ? 'DELIVERY' : 'TAKEAWAY'),
-  );
+  builder.line(data.tableName ?? orderTypeLabel(data.orderType).toUpperCase());
   builder.size(1, 1).bold(false);
+  /**
+   * A dine-out order sits at a table AND takes a parcel home. Without this
+   * line the ticket looks like any other dine-in and the kitchen has no reason
+   * to box anything.
+   */
+  if (data.orderType === 'dine_out') {
+    builder.bold(true).line('*** DINE-OUT + PARCEL ***').bold(false);
+  }
   builder.divider('=');
 
   builder.align('left');
@@ -75,6 +84,11 @@ export function buildKitchenTicket(
       builder.line(index === 0 ? prefix + chunk : ' '.repeat(prefix.length) + chunk);
     }
     builder.bold(false);
+
+    // Which specific dishes get boxed — the whole point of a dine-out order.
+    if (item.isParcel) {
+      builder.bold(true).line(' '.repeat(prefix.length) + '>> PARCEL').bold(false);
+    }
 
     if (item.notes) {
       for (const chunk of wrap(`** ${item.notes}`, charsPerLine - prefix.length)) {
@@ -126,7 +140,12 @@ export function kitchenTicketFromOrder(
     waiterName?: string | null;
     orderType?: string;
     createdAt?: string;
-    items: Array<{ productName: string; quantity: number; notes?: string | null }>;
+    items: Array<{
+      productName: string;
+      quantity: number;
+      notes?: string | null;
+      isParcel?: boolean;
+    }>;
   },
   options: { variant?: KitchenTicketData['variant']; items?: typeof order.items } = {},
 ): KitchenTicketData {
@@ -143,6 +162,7 @@ export function kitchenTicketFromOrder(
       name: item.productName,
       quantity: item.quantity,
       notes: item.notes,
+      isParcel: item.isParcel,
     })),
   };
 }

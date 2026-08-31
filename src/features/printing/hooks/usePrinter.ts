@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { usePrinterStore } from '../store/printer.store';
 import { buildReceipt, ReceiptData } from '../templates/receipt.template';
 import { buildKitchenTicket, KitchenTicketData } from '../templates/kitchenTicket.template';
+import { buildShiftReport, ShiftReportData } from '../templates/shiftReport.template';
 import { getTransport, PrinterError } from '../transports';
 import { PrinterDevice, PrinterProfile, PrintResult } from '../types';
 
@@ -130,7 +131,15 @@ export function usePrinter() {
     [printWith],
   );
 
+  /** The Z-report a cashier prints when handing their drawer to the owner. */
+  const printShiftReport = useCallback(
+    (data: ShiftReportData): Promise<PrintResult> =>
+      printWith((profile) => buildShiftReport(data, profile), 'Shift report printing failed.'),
+    [printWith],
+  );
+
   return {
+    printShiftReport,
     profile,
     connection,
     hasPrinter,

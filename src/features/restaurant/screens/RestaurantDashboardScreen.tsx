@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { View, StyleSheet, Pressable } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, DollarSign, Percent, ShoppingCart, TrendingUp, Wallet } from 'lucide-react-native';
 
@@ -35,6 +36,7 @@ function rangeStart(key: string): string | undefined {
 
 export function RestaurantDashboardScreen() {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const { user } = useAuth();
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
@@ -165,6 +167,30 @@ export function RestaurantDashboardScreen() {
             ))
           ) : (
             <Text variant="caption" color="mutedForeground">No settled orders yet.</Text>
+          )}
+        </SectionCard>
+
+        {/*
+          Two different questions, deliberately kept apart: who SOLD it (the
+          waiter who opened the order) and who COLLECTED it (the cashier who
+          took the money and has to hand it over).
+        */}
+        <SectionCard
+          title="By cashier"
+          action={
+            <Pressable onPress={() => navigation.navigate('Cashiers')}>
+              <Text variant="caption" style={{ color: theme.colors.primary }}>
+                Shifts
+              </Text>
+            </Pressable>
+          }
+        >
+          {report?.byCashier?.length ? (
+            report.byCashier.map((c) => (
+              <KeyValueRow key={c.name} label={`${c.name} · ${c.orders}`} value={format(c.revenue)} />
+            ))
+          ) : (
+            <Text variant="caption" color="mutedForeground">No data yet.</Text>
           )}
         </SectionCard>
 

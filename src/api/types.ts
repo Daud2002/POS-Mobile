@@ -61,10 +61,18 @@ export type RestaurantOrderStatus =
   | 'draft'
   | 'requested'
   | 'preparing'
+  /** Cooked and passed to the floor. Still unpaid, still holds its table. */
+  | 'handed_over'
   | 'completed'
   | 'cancelled';
 
-export type RestaurantOrderType = 'none' | 'dine_in' | 'takeaway' | 'delivery';
+/** 'dine_out' eats in AND takes a parcel home, so it needs a table too. */
+export type RestaurantOrderType =
+  | 'none'
+  | 'dine_in'
+  | 'dine_out'
+  | 'takeaway'
+  | 'delivery';
 
 export type TableStatus = 'free' | 'reserved';
 
@@ -86,6 +94,8 @@ export interface RestaurantOrderItem {
   unitCost?: Decimal | null;
   total: Decimal;
   notes?: string | null;
+  /** Pack this line to go, on a dine_out order that also eats in. */
+  isParcel?: boolean;
   /** Which round this line belongs to. Null while still a draft. */
   sentAt?: string | null;
 }
@@ -105,6 +115,12 @@ export interface RestaurantOrder {
   tableId?: string | null;
   tableName?: string | null;
   waiterName?: string | null;
+  /** Who TOOK THE MONEY — a cashier, never the waiter. Null until paid. */
+  settledByName?: string | null;
+  settledById?: string | null;
+  settledAt?: string | null;
+  /** The cashier shift this payment landed in. */
+  shiftId?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   deliveryAddress?: string | null;
@@ -124,10 +140,11 @@ export interface RestaurantOrderItemPayload {
   productId: string;
   quantity: number;
   notes?: string;
+  isParcel?: boolean;
 }
 
 export interface CreateRestaurantOrderPayload {
-  orderType: 'dine_in' | 'takeaway' | 'delivery';
+  orderType: 'dine_in' | 'dine_out' | 'takeaway' | 'delivery';
   tableId?: string;
   items: RestaurantOrderItemPayload[];
   isDraft?: boolean;
@@ -156,11 +173,99 @@ export interface RestaurantSalesReport {
   unknownCostLineCount: number;
   topProducts: { name: string; quantity: number; revenue: number; profit: number }[];
   byWaiter: { name: string; orders: number; revenue: number }[];
+  /** Who COLLECTED the money, as opposed to who took the order. */
+  byCashier: { name: string; orders: number; revenue: number }[];
   byOrderType: { orderType: string; orders: number; revenue: number }[];
 }
 
 /** A money value as it arrives from the API — always run through `toNumber()`. */
 export type Decimal = number | string;
+
+// ------------------------------------------------------------ cashier shifts
+
+export type CashierShiftStatus = 'open' | 'closed' | 'collected';
+
+/** Money taken during a shift, split the way an owner counts it. */
+export interface ShiftTotals {
+  cashSales: number;
+  cardSales: number;
+  onlineSales: number;
+  otherSales: number;
+  totalSales: number;
+  orderCount: number;
+  cashPaidOut: number;
+  /** openingFloat + cashSales − cashPaidOut. Only cash touches the drawer. */
+  expectedCash: number;
+}
+
+export interface CashierShift {
+  id: string;
+  storeId: string;
+  userId: string;
+  status: CashierShiftStatus;
+  openedAt: string;
+  openingFloat: number;
+  closedAt?: string | null;
+  cashierName?: string | null;
+  closedByName?: string | null;
+  collectedByName?: string | null;
+  /** Frozen at close; null while the shift is still open. */
+  cashSales?: number | null;
+  cardSales?: number | null;
+  onlineSales?: number | null;
+  otherSales?: number | null;
+  totalSales?: number | null;
+  orderCount?: number | null;
+  cashPaidOut?: number | null;
+  expectedCash?: number | null;
+  /** Null after an owner force-close — nobody counted the drawer. */
+  countedCash?: number | null;
+  difference?: number | null;
+  closingNotes?: string | null;
+  collectedAmount?: number | null;
+  collectedAt?: string | null;
+  collectionNotes?: string | null;
+  /** Live for an open shift, the snapshot for a closed one. */
+  totals?: ShiftTotals;
+}
+
+export interface CashierShiftDetail extends CashierShift {
+  orders: RestaurantOrder[];
+}
+
+export interface CashierDashboard {
+  range: {
+    cash: number;
+    card: number;
+    online: number;
+    other: number;
+    total: number;
+    orderCount: number;
+  };
+  currentShift: CashierShift | null;
+  recentShifts: CashierShift[];
+}
+
+/** One row of the owner's "who collected what" table. */
+export interface CashierSummaryRow {
+  userId: string;
+  name: string;
+  shifts: number;
+  openNow: boolean;
+  orders: number;
+  cashSales: number;
+  cardSales: number;
+  onlineSales: number;
+  otherSales: number;
+  totalSales: number;
+  cashPaidOut: number;
+  expectedCash: number;
+  countedCash: number;
+  difference: number;
+  collectedAmount: number;
+  /** Counted and closed, but not yet handed to the owner. */
+  pendingCollection: number;
+}
 
 export interface AppUser {
   id: string;
@@ -182,6 +287,14 @@ export interface AppUser {
   printerConfig?: string;
   /** 'general' keeps today's flow; 'restaurant' unlocks the table-service screens. */
   accountType?: AccountType;
+  /**
+   * Store identity and tenant flags, grafted onto the profile by /auth/me so
+   * screens do not each have to fetch the store to know its name or whether
+   * the till requires an open shift.
+   */
+  storeName?: string;
+  logoUrl?: string | null;
+  shiftsEnabled?: boolean;
   /** Employee job title. Only meaningful for restaurant tenants. */
   designation?: string;
   printerName?: string;
@@ -221,6 +334,10 @@ export interface Store {
   phone?: string;
   email?: string;
   printerConfig?: string;
+  /** Server-relative; join onto API_BASE_URL before using it as an image src. */
+  logoUrl?: string | null;
+  /** Restaurant tenants only: cashiers must open a shift before settling. */
+  shiftsEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }

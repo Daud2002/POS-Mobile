@@ -1,8 +1,9 @@
-import { ReactNode } from 'react';
+import { ReactNode, RefObject } from 'react';
 import {
   RefreshControl,
   ScrollView,
   StyleProp,
+  StyleSheet,
   View,
   ViewStyle,
 } from 'react-native';
@@ -23,6 +24,16 @@ interface ScreenProps {
   padding?: Spacing;
   edges?: readonly Edge[];
   contentStyle?: StyleProp<ViewStyle>;
+  /**
+   * Docked to the bottom of the VIEWPORT, outside the scroll area — for an
+   * action that must stay reachable however far the content has scrolled.
+   *
+   * A flex sibling rather than an absolute overlay, so it can never cover the
+   * last rows of the list behind it.
+   */
+  footer?: ReactNode;
+  /** Lets a screen scroll programmatically, e.g. to a section it just revealed. */
+  scrollRef?: RefObject<ScrollView | null>;
 }
 
 /**
@@ -37,6 +48,8 @@ export function Screen({
   padding = 'lg',
   edges = ['bottom'],
   contentStyle,
+  footer,
+  scrollRef,
 }: ScreenProps) {
   const theme = useTheme();
 
@@ -53,6 +66,7 @@ export function Screen({
       <PageFade>
         {scrollable ? (
           <ScrollView
+            ref={scrollRef}
             contentContainerStyle={content}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -72,6 +86,20 @@ export function Screen({
         ) : (
           <View style={[{ flex: 1 }, content]}>{children}</View>
         )}
+        {footer ? (
+          <View
+            style={{
+              paddingHorizontal: theme.spacing[padding],
+              paddingTop: theme.spacing.md,
+              paddingBottom: theme.spacing.md,
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: theme.colors.border,
+              backgroundColor: theme.colors.background,
+            }}
+          >
+            {footer}
+          </View>
+        ) : null}
       </PageFade>
     </SafeAreaView>
   );

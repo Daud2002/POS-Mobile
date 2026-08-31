@@ -11,7 +11,7 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { getSocket, RealtimeEvents } from '@/lib/socket';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { kitchenTicketFromOrder } from '@/features/printing/templates/kitchenTicket.template';
-import { orderLabel } from '@/lib/orderLabel';
+import { orderDestination, orderLabel, orderStatusLabel } from '@/lib/orderLabel';
 import { tint, useTheme } from '@/theme';
 import type { RestaurantOrder } from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
@@ -63,7 +63,7 @@ export function KitchenScreen() {
     const socket = getSocket();
 
     const onCreated = (order: RestaurantOrder) => {
-      toast.info(`${order.waiterName ?? 'A waiter'} sent an order for ${order.tableName ?? 'takeaway'}`);
+      toast.info(`${order.waiterName ?? 'A waiter'} sent an order for ${orderDestination(order)}`);
       if (!printed.current.has(order.id)) {
         printed.current.add(order.id);
         void print(order, 'new');
@@ -85,9 +85,20 @@ export function KitchenScreen() {
     };
   }, [print, toast]);
 
-  const setPreparing = async (order: RestaurantOrder) => {
+  /**
+   * The kitchen's two moves. `handed_over` is where its authority ends: the
+   * food is out, but the order stays live and holds its table until the
+   * cashier takes payment.
+   */
+  const moveTo = async (
+    order: RestaurantOrder,
+    orderStatus: 'preparing' | 'handed_over',
+  ) => {
     try {
-      await restaurantApi.setStatus(order.id, 'preparing');
+      await restaurantApi.setStatus(order.id, orderStatus);
+      if (orderStatus === 'handed_over') {
+        toast.success('Handed over — the cashier can now take payment');
+      }
       refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to update status');
@@ -128,8 +139,7 @@ export function KitchenScreen() {
               <View style={styles.cardHead}>
                 <View style={{ flex: 1 }}>
                   <Text variant="bodySemibold" numberOfLines={1}>
-                    {order.tableName ??
-                      (order.orderType === 'delivery' ? 'Delivery' : 'Takeaway')}
+                    {orderDestination(order)}
                   </Text>
                   <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                     {orderLabel(order)} · {order.waiterName ?? 'Unknown'} ·{' '}
@@ -143,10 +153,9 @@ export function KitchenScreen() {
                       order.orderStatus === 'requested'
                         ? theme.colors.warning
                         : theme.colors.info,
-                    textTransform: 'capitalize',
                   }}
                 >
-                  {order.orderStatus}
+                  {orderStatusLabel(order.orderStatus)}
                 </Text>
               </View>
 
@@ -156,6 +165,12 @@ export function KitchenScreen() {
                     <Text variant="body">
                       <Text variant="bodySemibold">{item.quantity} × </Text>
                       {item.productName}
+                      {/* Which dishes to box on a dine-out order. */}
+                      {item.isParcel ? (
+                        <Text variant="caption" style={{ color: theme.colors.info }}>
+                          {'  '}PARCEL
+                        </Text>
+                      ) : null}
                     </Text>
                     {item.notes ? (
                       <Text variant="caption" style={{ color: theme.colors.warning, paddingLeft: 16 }}>
@@ -168,9 +183,18 @@ export function KitchenScreen() {
 
               <View style={styles.actions}>
                 {order.orderStatus === 'requested' && (
-                  <Button style={{ flex: 1 }} onPress={() => setPreparing(order)}
-                  label="Start preparing"
-                />
+                  <Button
+                    style={{ flex: 1 }}
+                    onPress={() => moveTo(order, 'preparing')}
+                    label="Start preparing"
+                  />
+                )}
+                {order.orderStatus === 'preparing' && (
+                  <Button
+                    style={{ flex: 1 }}
+                    onPress={() => moveTo(order, 'handed_over')}
+                    label="Handed over"
+                  />
                 )}
                 <Button
                   variant="outline"

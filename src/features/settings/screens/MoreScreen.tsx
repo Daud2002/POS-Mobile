@@ -4,6 +4,7 @@ import {
   BarChart3,
   ChevronRight,
   FolderTree,
+  HandCoins,
   Settings as SettingsIcon,
   ShoppingBag,
   Users,
@@ -95,6 +96,18 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
         icon: Wallet,
         tone: 'warning',
         permission: 'expenses',
+      },
+      {
+        /**
+         * Owner-only, so it carries no `permission` — entries without one are
+         * filtered to owners, the same way Employees is.
+         */
+        route: 'Cashiers',
+        label: 'Cashiers',
+        description: 'What each cashier collected, and what is still to collect',
+        icon: HandCoins,
+        tone: 'primary',
+        accountType: 'restaurant',
       },
     ],
   },

@@ -1,6 +1,7 @@
 import { AppUser, InvoiceData, Order, RestaurantOrder, Store } from '@/api/types';
 import { paymentLabel } from '@/constants/statuses';
 import { toNumber } from '@/lib/format';
+import { orderDestination, orderTypeLabel } from '@/lib/orderLabel';
 
 import { ReceiptData } from './receipt.template';
 
@@ -160,12 +161,12 @@ export function receiptFromRestaurantOrder(params: {
     unitPrice: toNumber(item.unitPrice),
     discount: 0,
     total: toNumber(item.total),
+    isParcel: item.isParcel,
   }));
 
   const rawSubtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
-  const destination =
-    order.tableName ?? (order.orderType === 'delivery' ? 'Delivery' : 'Takeaway');
+  const destination = orderDestination(order);
 
   return {
     store: {
@@ -177,6 +178,16 @@ export function receiptFromRestaurantOrder(params: {
     invoiceNumber: order.orderSequence ? `#${order.orderSequence}` : order.orderNumber,
     date: new Date(order.createdAt),
     customerName: order.customerName ?? destination,
+    // Printed as their own rows, so a dine-out bill says so explicitly rather
+    // than being indistinguishable from a plain dine-in one.
+    orderTypeLabel:
+      order.orderType && order.orderType !== 'none'
+        ? orderTypeLabel(order.orderType)
+        : undefined,
+    tableName: order.tableName,
+    // The rider works from this paper on a delivery order.
+    customerPhone: order.customerPhone,
+    deliveryAddress: order.orderType === 'delivery' ? order.deliveryAddress : undefined,
     // The waiter is who the customer dealt with, so that is the useful name.
     dispatchedBy: order.waiterName ?? 'Staff',
     items,

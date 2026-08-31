@@ -11,6 +11,10 @@ export const RealtimeEvents = {
   orderUpdated: 'order:updated',
   tableUpdated: 'table:updated',
   draftUpdated: 'draft:updated',
+  /** Cashier drawers opening, closing, and being handed to the owner. */
+  shiftOpened: 'shift:opened',
+  shiftClosed: 'shift:closed',
+  shiftCollected: 'shift:collected',
 } as const;
 
 let socket: Socket | null = null;

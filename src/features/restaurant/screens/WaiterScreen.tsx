@@ -1,7 +1,16 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Save, X, Plus, Minus, ClipboardList, ChevronRight } from 'lucide-react-native';
+import {
+  Send,
+  Save,
+  X,
+  Plus,
+  Minus,
+  ClipboardList,
+  ChevronRight,
+  ShoppingBag,
+} from 'lucide-react-native';
 
 import { restaurantApi, productsApi, categoriesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
@@ -22,7 +31,12 @@ interface CartLine {
   price: number;
   quantity: number;
   notes?: string;
+  /** Pack this line to go. Only offered on a dine-out order. */
+  isParcel?: boolean;
 }
+
+/** What a waiter can punch. Takeaway and delivery belong to the cashier. */
+type WaiterOrderType = 'dine_in' | 'dine_out';
 
 /**
  * Waiter order entry.
@@ -41,11 +55,33 @@ export function WaiterScreen() {
   const queryClient = useQueryClient();
 
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
+  /**
+   * Dine-out means the guests eat in AND take a parcel home, so it still needs
+   * a table — the only difference is that some lines get boxed.
+   */
+  const [orderType, setOrderType] = useState<WaiterOrderType>('dine_in');
   const [appendTo, setAppendTo] = useState<RestaurantOrder | null>(null);
   const [editingDraft, setEditingDraft] = useState<RestaurantOrder | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [openCategory, setOpenCategory] = useState<Category | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+
+  /**
+   * Picking a table is only half the job — the waiter then has to take the
+   * order, and the menu sits below the table grid and the drafts list. On a
+   * phone that is off-screen, so tapping a table jumps straight there instead
+   * of leaving the waiter to scroll past everything they just finished with.
+   */
+  const scrollRef = useRef<ScrollView>(null);
+  const menuY = useRef(0);
+
+  const scrollToMenu = useCallback(() => {
+    // A frame's delay: the drafts list may have just appeared or gone, which
+    // moves the menu, and onLayout has to land before we can aim at it.
+    requestAnimationFrame(() =>
+      scrollRef.current?.scrollTo({ y: Math.max(menuY.current - 8, 0), animated: true }),
+    );
+  }, []);
   const [submitting, setSubmitting] = useState(false);
 
   const tablesQuery = useQuery({
@@ -60,7 +96,9 @@ export function WaiterScreen() {
 
   const liveQuery = useQuery({
     queryKey: queryKeys.restaurantOrders('live'),
-    queryFn: () => restaurantApi.listOrders({ orderStatus: 'requested,preparing' }),
+    // handed_over included: the food is out but the table is still taken, so
+    // the waiter must still be able to add a round to it.
+    queryFn: () => restaurantApi.listOrders({ orderStatus: 'requested,preparing,handed_over' }),
   });
 
   const productsQuery = useQuery({
@@ -143,6 +181,7 @@ export function WaiterScreen() {
     setEditingDraft(null);
     setReviewOpen(false);
     setOpenCategory(null);
+    setOrderType('dine_in');
   };
 
   const itemsPayload = () =>
@@ -150,7 +189,15 @@ export function WaiterScreen() {
       productId: l.productId,
       quantity: l.quantity,
       notes: l.notes?.trim() || undefined,
+      // Only meaningful on a dine-out order; sending it otherwise would put a
+      // stray PARCEL flag on a plain dine-in ticket.
+      isParcel: orderType === 'dine_out' ? !!l.isParcel : undefined,
     }));
+
+  const toggleParcel = (productId: string) =>
+    setCart((prev) =>
+      prev.map((l) => (l.productId === productId ? { ...l, isParcel: !l.isParcel } : l)),
+    );
 
   const submit = async (asDraft: boolean) => {
     if (!cart.length) {
@@ -181,7 +228,7 @@ export function WaiterScreen() {
         }
       } else {
         await restaurantApi.createOrder({
-          orderType: 'dine_in',
+          orderType,
           tableId: selectedTable?.id,
           items: itemsPayload(),
           isDraft: asDraft,
@@ -223,7 +270,39 @@ export function WaiterScreen() {
       : 'No table selected';
 
   return (
-    <Screen scrollable refreshing={tablesQuery.isRefetching} onRefresh={refresh}>
+    <Screen
+      scrollable
+      refreshing={tablesQuery.isRefetching}
+      onRefresh={refresh}
+      scrollRef={scrollRef}
+      /*
+       * Docked so it stays reachable the moment there is something to review,
+       * however far down the menu the waiter has scrolled. Rendered outside
+       * the scroll area, so it cannot cover the last dishes in the list.
+       * Hidden while the cart is empty — an always-visible disabled button
+       * would just eat screen height on a phone.
+       */
+      footer={
+        cart.length ? (
+          <View style={styles.footerBar}>
+            <Button
+              style={{ flex: 1 }}
+              onPress={() => setReviewOpen(true)}
+              icon={<ClipboardList size={16} color={theme.colors.primaryForeground} />}
+              label={`Review · ${cartCount} item${cartCount === 1 ? '' : 's'} · ${format(cartTotal)}`}
+            />
+            {/* Fixed-width neighbour, so the Review button keeps one width
+                however long its item-count/total label grows. */}
+            <Button
+              variant="outline"
+              onPress={reset}
+              icon={<X size={16} color={theme.colors.mutedForeground} />}
+              label="Clear"
+            />
+          </View>
+        ) : null
+      }
+    >
       <View style={styles.stack}>
         <ConnectionBanner connected={connected} />
 
@@ -240,12 +319,16 @@ export function WaiterScreen() {
                 onPress={() => {
                   if (free) {
                     setAppendTo(null);
-                    setSelectedTable(selected ? null : table);
+                    const next = selected ? null : table;
+                    setSelectedTable(next);
+                    // Deselecting should not yank the waiter down the page.
+                    if (next) scrollToMenu();
                   } else if (live) {
                     // Occupied: this becomes an extra round on the open order.
                     setAppendTo(live);
                     setEditingDraft(null);
                     setSelectedTable(null);
+                    scrollToMenu();
                   }
                 }}
                 style={[
@@ -310,8 +393,10 @@ export function WaiterScreen() {
         )}
 
         {/* ------------------------------------------------ categories */}
-        <Text variant="h2">Menu</Text>
-        <Text variant="caption" color="mutedForeground">{destination}</Text>
+        <View onLayout={(e) => { menuY.current = e.nativeEvent.layout.y; }}>
+          <Text variant="h2">Menu</Text>
+          <Text variant="caption" color="mutedForeground">{destination}</Text>
+        </View>
 
         <View style={{ gap: 8 }}>
           {categories.map((category) => {
@@ -352,27 +437,6 @@ export function WaiterScreen() {
           <EmptyState title="No menu yet" description="The owner has not added any categories." />
         )}
 
-        {/* ------------------------------------- review, at the very end */}
-        <View style={{ gap: 8, paddingTop: 4 }}>
-          <Button
-            onPress={() => setReviewOpen(true)}
-            disabled={!cart.length}
-            icon={<ClipboardList size={16} color={theme.colors.primaryForeground} />}
-            label={
-              cart.length
-                ? `Review order · ${cartCount} item${cartCount === 1 ? '' : 's'} · ${format(cartTotal)}`
-                : 'Review order'
-            }
-          />
-          {cart.length > 0 && (
-            <Button
-              variant="ghost"
-              onPress={reset}
-              icon={<X size={16} color={theme.colors.mutedForeground} />}
-              label="Clear order"
-            />
-          )}
-        </View>
       </View>
 
       {/* ------------------------------------------ category item sheet */}
@@ -476,8 +540,76 @@ export function WaiterScreen() {
                     }
                     placeholder="Note for kitchen…"
                   />
+                  {/* Per LINE, not per order: the whole point of dine-out is
+                      that some dishes stay on the table and others go home. */}
+                  {orderType === 'dine_out' && !appendTo && (
+                    <Pressable
+                      onPress={() => toggleParcel(line.productId)}
+                      style={[
+                        styles.parcelToggle,
+                        {
+                          borderColor: line.isParcel
+                            ? theme.colors.info
+                            : theme.colors.border,
+                          backgroundColor: line.isParcel
+                            ? `${theme.colors.info}1A`
+                            : 'transparent',
+                        },
+                      ]}
+                    >
+                      <ShoppingBag
+                        size={13}
+                        color={line.isParcel ? theme.colors.info : theme.colors.mutedForeground}
+                      />
+                      <Text
+                        variant="caption"
+                        style={{
+                          color: line.isParcel
+                            ? theme.colors.info
+                            : theme.colors.mutedForeground,
+                        }}
+                      >
+                        {line.isParcel ? 'Packed to go' : 'Mark as parcel'}
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
               ))}
+            </View>
+          )}
+
+          {/* Dine-out still needs a table; only the parcel marking differs. */}
+          {!appendTo && (
+            <View style={{ gap: 6, paddingTop: 4 }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {(['dine_in', 'dine_out'] as const).map((option) => (
+                  <Pressable
+                    key={option}
+                    onPress={() => setOrderType(option)}
+                    style={[
+                      styles.typePill,
+                      {
+                        borderColor:
+                          orderType === option ? theme.colors.primary : theme.colors.border,
+                        backgroundColor:
+                          orderType === option
+                            ? `${theme.colors.primary}1A`
+                            : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text variant="caption">
+                      {option === 'dine_in' ? 'Dine-in' : 'Dine-out'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {orderType === 'dine_out' && (
+                <Text variant="caption" color="mutedForeground">
+                  Eating in and taking a parcel. Mark which items to pack — one
+                  bill covers both.
+                </Text>
+              )}
             </View>
           )}
 
@@ -516,6 +648,23 @@ export function WaiterScreen() {
 }
 
 const styles = StyleSheet.create({
+  footerBar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  typePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  parcelToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
   stack: { gap: 12 },
   tableGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tableCard: { width: '31%', borderWidth: 1, padding: 12, gap: 2 },
