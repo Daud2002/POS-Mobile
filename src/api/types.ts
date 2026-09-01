@@ -588,7 +588,8 @@ export interface ProductPayload {
 export interface CategoryPayload {
   name: string;
   description?: string;
-  image?: string;
+  /** An emoji. Null clears it — undefined would leave a PATCH untouched. */
+  image?: string | null;
   /** The web app omits this, which is a bug — mobile always sends it. */
   storeId?: string;
 }

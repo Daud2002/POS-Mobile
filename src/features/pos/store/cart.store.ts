@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { OrderStatus, PaymentMethod, Product } from '@/api/types';
+import { DEFAULT_PRODUCT_EMOJI, iconFor } from '@/constants/emojis';
 import { toNumber } from '@/lib/format';
 import { calculateOrderTotals, OrderTotals } from '@/lib/orderMath';
 
@@ -11,7 +12,7 @@ export interface CartLine {
   quantity: number;
   /** Per-unit discount. The API wants a line total, so it is multiplied on send. */
   itemDiscountPerUnit: number;
-  /** The product's emoji. The API field is `image`, not `image_emoji`. */
+  /** The icon shown on this line, resolved when it was added. */
   image?: string;
   /** Stock at the time it was added, so the UI can warn before overselling. */
   stock: number;
@@ -86,7 +87,9 @@ export const useCartStore = create<CartState>((set, get) => ({
             price: toNumber(product.price),
             quantity: 1,
             itemDiscountPerUnit: 0,
-            image: product.image,
+            // The category relation rides along on the product, so a dish with
+            // no icon of its own still lands in the cart wearing its group's.
+            image: iconFor(product, product.category, DEFAULT_PRODUCT_EMOJI),
             stock: product.stock,
           },
         ],

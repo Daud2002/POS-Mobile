@@ -7,6 +7,7 @@ import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from 
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
 import { Button, EmptyState, Input, SearchInput, Sheet, Text, useToast } from '@/components/ui';
+import { iconFor } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
@@ -61,7 +62,9 @@ export function RestaurantCashierScreen() {
   const [orderType, setOrderType] = useState<'takeaway' | 'delivery'>('takeaway');
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
-  const [cart, setCart] = useState<Array<{ productId: string; name: string; price: number; quantity: number }>>([]);
+  const [cart, setCart] = useState<
+    Array<{ productId: string; name: string; icon: string; price: number; quantity: number }>
+  >([]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -140,7 +143,22 @@ export function RestaurantCashierScreen() {
 
   const cartTotal = cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
 
-  const addToCart = (product: { id: string; name: string; price: Decimal }) =>
+  const categoryById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories],
+  );
+
+  /** A dish with no icon of its own borrows its category's. */
+  const iconOf = (product: { categoryId?: string; image?: string | null }) =>
+    iconFor(product, product.categoryId ? categoryById.get(product.categoryId) : null);
+
+  const addToCart = (product: {
+    id: string;
+    name: string;
+    price: Decimal;
+    categoryId?: string;
+    image?: string | null;
+  }) =>
     setCart((prev) => {
       const found = prev.find((l) => l.productId === product.id);
       if (found) {
@@ -148,7 +166,14 @@ export function RestaurantCashierScreen() {
           l.productId === product.id ? { ...l, quantity: l.quantity + 1 } : l,
         );
       }
-      return [...prev, { productId: product.id, name: product.name, price: toNumber(product.price), quantity: 1 }];
+      return [...prev, {
+        productId: product.id,
+        name: product.name,
+        // Resolved once, here: a cart line carries no category of its own.
+        icon: iconOf(product),
+        price: toNumber(product.price),
+        quantity: 1,
+      }];
     });
 
   const changeQty = (productId: string, delta: number) =>
@@ -499,6 +524,7 @@ export function RestaurantCashierScreen() {
                 ]}
               >
                 <Text variant="caption">
+                  {category.image ? `${category.image} ` : ''}
                   {category.name} ({categoryCounts.get(category.id) ?? 0})
                 </Text>
               </Pressable>
@@ -522,6 +548,7 @@ export function RestaurantCashierScreen() {
                   },
                 ]}
               >
+                <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
                 <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
                 <Text variant="caption" color="mutedForeground">
                   {format(toNumber(product.price))}
@@ -535,6 +562,7 @@ export function RestaurantCashierScreen() {
               <View style={[styles.divider, { borderColor: theme.colors.border }]} />
               {cart.map((line) => (
                 <View key={line.productId} style={styles.itemRow}>
+                  <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
                   <Text variant="body" style={{ flex: 1 }} numberOfLines={1}>{line.name}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <Pressable onPress={() => changeQty(line.productId, -1)}>

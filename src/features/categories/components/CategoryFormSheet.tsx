@@ -5,12 +5,15 @@ import { z } from 'zod';
 
 import { Category, CategoryPayload } from '@/api/types';
 import { Button } from '@/components/ui/Button';
+import { IconPicker } from '@/components/ui/IconPicker';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
 
 const categorySchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
+  /** Optional: a category with no icon simply lends none to its dishes. */
+  image: z.string().optional(),
 });
 
 type CategoryForm = z.infer<typeof categorySchema>;
@@ -38,18 +41,24 @@ export function CategoryFormSheet({
     formState: { errors },
   } = useForm<CategoryForm>({
     resolver: zodResolver(categorySchema),
-    defaultValues: { name: '', description: '' },
+    defaultValues: { name: '', description: '', image: '' },
   });
 
   useEffect(() => {
     if (!open) return;
-    reset({ name: category?.name ?? '', description: category?.description ?? '' });
+    reset({
+      name: category?.name ?? '',
+      description: category?.description ?? '',
+      image: category?.image ?? '',
+    });
   }, [open, category, reset]);
 
   const submit = (values: CategoryForm) =>
     onSubmit({
       name: values.name.trim(),
       description: values.description?.trim() || undefined,
+      // Null, not '', so a cleared icon reads as unset to every consumer.
+      image: values.image || null,
     });
 
   return (
@@ -76,6 +85,19 @@ export function CategoryFormSheet({
         </>
       }
     >
+      <Controller
+        control={control}
+        name="image"
+        render={({ field: { onChange, value } }) => (
+          <IconPicker
+            value={value}
+            onChange={onChange}
+            allowClear
+            hint="Dishes with no icon of their own show this one."
+          />
+        )}
+      />
+
       <Controller
         control={control}
         name="name"

@@ -16,6 +16,7 @@ import { restaurantApi, productsApi, categoriesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
 import { Button, EmptyState, Input, Sheet, Text, useToast } from '@/components/ui';
+import { categoryIcon, iconFor } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
@@ -28,6 +29,8 @@ import { ConnectionBanner } from '../components/ConnectionBanner';
 interface CartLine {
   productId: string;
   name: string;
+  /** Resolved when the line is created — see addToCart. */
+  icon: string;
   price: number;
   quantity: number;
   notes?: string;
@@ -150,7 +153,22 @@ export function WaiterScreen() {
   const cartTotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  const addToCart = (product: { id: string; name: string; price: Decimal }) =>
+  const categoryById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories],
+  );
+
+  /** A dish with no icon of its own borrows its category's. */
+  const iconOf = (product: { categoryId?: string; image?: string | null }) =>
+    iconFor(product, product.categoryId ? categoryById.get(product.categoryId) : null);
+
+  const addToCart = (product: {
+    id: string;
+    name: string;
+    price: Decimal;
+    categoryId?: string;
+    image?: string | null;
+  }) =>
     setCart((prev) => {
       const found = prev.find((l) => l.productId === product.id);
       if (found) {
@@ -160,7 +178,14 @@ export function WaiterScreen() {
       }
       return [
         ...prev,
-        { productId: product.id, name: product.name, price: toNumber(product.price), quantity: 1 },
+        {
+          productId: product.id,
+          name: product.name,
+          // Resolved once, here: a cart line carries no category of its own.
+          icon: iconOf(product),
+          price: toNumber(product.price),
+          quantity: 1,
+        },
       ];
     });
 
@@ -420,6 +445,9 @@ export function WaiterScreen() {
                   },
                 ]}
               >
+                <Text style={{ fontSize: 22, lineHeight: 28, opacity: category.image ? 1 : 0.4 }}>
+                  {categoryIcon(category)}
+                </Text>
                 <View style={{ flex: 1 }}>
                   <Text variant="bodySemibold" numberOfLines={1}>{category.name}</Text>
                   <Text variant="caption" color="mutedForeground" numberOfLines={1}>
@@ -463,6 +491,7 @@ export function WaiterScreen() {
                     },
                   ]}
                 >
+                  <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
                   <View style={{ flex: 1 }}>
                     <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
                     <Text variant="caption" color="mutedForeground">
@@ -513,6 +542,7 @@ export function WaiterScreen() {
               {cart.map((line) => (
                 <View key={line.productId} style={{ gap: 6 }}>
                   <View style={styles.cartRow}>
+                    <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
                     <View style={{ flex: 1 }}>
                       <Text variant="bodySemibold" numberOfLines={1}>{line.name}</Text>
                       <Text variant="caption" color="mutedForeground">

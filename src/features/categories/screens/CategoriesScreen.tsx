@@ -18,6 +18,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { SkeletonList } from '@/components/ui/Skeleton';
 import { Text } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/Toast';
+import { categoryIcon } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -126,6 +127,10 @@ export function CategoriesScreen() {
                   gap: theme.spacing.md,
                 }}
               >
+                <Text style={{ fontSize: 24, lineHeight: 30, opacity: item.image ? 1 : 0.4 }}>
+                  {categoryIcon(item)}
+                </Text>
+
                 <View style={{ flex: 1 }}>
                   <Text variant="bodyMedium">{item.name}</Text>
                   {item.description ? (

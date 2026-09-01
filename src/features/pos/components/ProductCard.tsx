@@ -5,7 +5,7 @@ import { Product } from '@/api/types';
 import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/constants/config';
-import { DEFAULT_PRODUCT_EMOJI } from '@/constants/emojis';
+import { DEFAULT_PRODUCT_EMOJI, iconFor } from '@/constants/emojis';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -17,11 +17,8 @@ interface ProductCardProps {
 }
 
 /**
- * A tappable product tile: emoji in a tinted chip, name, price in brand green,
+ * A tappable product tile: icon in a tinted chip, name, price in brand green,
  * and a stock pill when it matters. Selected state = primary border + badge.
- *
- * Note `product.image` — the web POS reads `product.image_emoji`, a Supabase-era
- * field that does not exist on the API, which is why its grid renders blank.
  */
 export const ProductCard = memo(function ProductCard({
   product,
@@ -54,7 +51,9 @@ export const ProductCard = memo(function ProductCard({
             },
           ]}
         >
-          <Text style={styles.emoji}>{product.image || DEFAULT_PRODUCT_EMOJI}</Text>
+          <Text style={styles.emoji}>
+            {iconFor(product, product.category, DEFAULT_PRODUCT_EMOJI)}
+          </Text>
         </View>
 
         {inCart > 0 ? (

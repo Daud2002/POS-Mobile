@@ -14,6 +14,7 @@ export type { FilterPillOption } from './FilterPill';
 export { Gradient } from './Gradient';
 export type { GradientVariant } from './Gradient';
 export { IconButton } from './IconButton';
+export { IconPicker } from './IconPicker';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { PasswordField } from './PasswordField';

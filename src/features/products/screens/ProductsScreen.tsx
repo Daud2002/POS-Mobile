@@ -16,7 +16,7 @@ import { SkeletonList } from '@/components/ui/Skeleton';
 import { Switch } from '@/components/ui/Switch';
 import { Text } from '@/components/ui/Text';
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/constants/config';
-import { DEFAULT_PRODUCT_EMOJI } from '@/constants/emojis';
+import { DEFAULT_PRODUCT_EMOJI, iconFor } from '@/constants/emojis';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -107,7 +107,7 @@ export function ProductsScreen() {
               <Card padding="lg">
                 <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
                   <Text style={{ fontSize: 26, lineHeight: 32 }}>
-                    {item.image || DEFAULT_PRODUCT_EMOJI}
+                    {iconFor(item, item.category, DEFAULT_PRODUCT_EMOJI)}
                   </Text>
 
                   <View style={{ flex: 1 }}>

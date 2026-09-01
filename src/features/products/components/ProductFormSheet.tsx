@@ -6,14 +6,13 @@ import { z } from 'zod';
 
 import { Category, Product, ProductPayload } from '@/api/types';
 import { Button } from '@/components/ui/Button';
+import { IconPicker } from '@/components/ui/IconPicker';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Sheet } from '@/components/ui/Sheet';
 import { DEFAULT_PRODUCT_EMOJI } from '@/constants/emojis';
 import { toNumber } from '@/lib/format';
 import { useTheme } from '@/theme/ThemeProvider';
-
-import { EmojiPicker } from './EmojiPicker';
 
 /** Numeric fields arrive as strings from TextInput, so parse and validate here. */
 const numericString = (message: string) =>
@@ -158,7 +157,7 @@ export function ProductFormSheet({
         control={control}
         name="image"
         render={({ field: { onChange, value } }) => (
-          <EmojiPicker value={value} onChange={onChange} error={errors.image?.message} />
+          <IconPicker value={value} onChange={onChange} error={errors.image?.message} />
         )}
       />
 
