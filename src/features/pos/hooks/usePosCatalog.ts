@@ -6,6 +6,7 @@ import { categoriesApi, productsApi, storesApi } from '@/api/services';
 import { Product } from '@/api/types';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useDebouncedValue } from '@/hooks/useDebouncedCallback';
+import { sortBySortOrder } from '@/lib/sortOrder';
 
 export const ALL_CATEGORIES = 'all';
 
@@ -45,21 +46,29 @@ export function usePosCatalog() {
   });
 
   const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
-  const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data]);
+  // The owner's menu order — the pill row follows it, and so does the grid.
+  const categories = useMemo(
+    () => sortBySortOrder(categoriesQuery.data ?? []),
+    [categoriesQuery.data],
+  );
 
+  // Sorted AFTER filtering, so one category reads in the same relative order
+  // its products have under "All".
   const filtered = useMemo(() => {
     const term = debouncedSearch.trim().toLowerCase();
 
-    return products.filter((product) => {
-      if (categoryId !== ALL_CATEGORIES && product.categoryId !== categoryId) return false;
-      if (!term) return true;
+    return sortBySortOrder(
+      products.filter((product) => {
+        if (categoryId !== ALL_CATEGORIES && product.categoryId !== categoryId) return false;
+        if (!term) return true;
 
-      return (
-        product.name.toLowerCase().includes(term) ||
-        product.sku?.toLowerCase().includes(term) ||
-        product.barcode?.toLowerCase().includes(term)
-      );
-    });
+        return (
+          product.name.toLowerCase().includes(term) ||
+          product.sku?.toLowerCase().includes(term) ||
+          product.barcode?.toLowerCase().includes(term)
+        );
+      }),
+    );
   }, [products, categoryId, debouncedSearch]);
 
   const categoryOptions = useMemo(

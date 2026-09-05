@@ -8,6 +8,7 @@ import { Product, ProductPayload } from '@/api/types';
 import { useToast } from '@/components/ui/Toast';
 import { useDebouncedValue } from '@/hooks/useDebouncedCallback';
 import { useStoreId } from '@/hooks/useStoreId';
+import { compareBySortOrder } from '@/lib/sortOrder';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
@@ -53,8 +54,11 @@ export function useProducts() {
         )
       : all;
 
-    // Active products first, matching the web ordering.
-    return [...filtered].sort((a, b) => Number(b.isActive) - Number(a.isActive));
+    // Active products first, matching the web ordering; within each group,
+    // the owner's till order.
+    return [...filtered].sort(
+      (a, b) => Number(b.isActive) - Number(a.isActive) || compareBySortOrder(a, b),
+    );
   }, [productsQuery.data, debouncedSearch]);
 
   const create = useMutation({

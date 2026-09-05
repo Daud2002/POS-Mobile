@@ -22,6 +22,7 @@ import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
+import { sortBySortOrder } from '@/lib/sortOrder';
 import { tint, useTheme } from '@/theme';
 import type { Category, Decimal, Product, RestaurantOrder, RestaurantTable } from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
@@ -136,12 +137,20 @@ export function WaiterScreen() {
   const drafts = draftsQuery.data ?? [];
   const liveOrders = liveQuery.data ?? [];
   const allProducts = productsQuery.data ?? [];
-  const categories = categoriesQuery.data ?? [];
+  // The owner's menu order, the same one the web screens show.
+  const categories = useMemo(
+    () => sortBySortOrder(categoriesQuery.data ?? []),
+    [categoriesQuery.data],
+  );
 
-  /** Products bucketed by category, so opening one is a lookup not a scan. */
+  /**
+   * Products bucketed by category, so opening one is a lookup not a scan.
+   * Bucketed from the sorted list, so each category's sheet opens in the
+   * owner's menu order.
+   */
   const productsByCategory = useMemo(() => {
     const map = new Map<string, Product[]>();
-    for (const product of allProducts) {
+    for (const product of sortBySortOrder(allProducts)) {
       const key = product.categoryId ?? 'uncategorised';
       const bucket = map.get(key);
       if (bucket) bucket.push(product);
@@ -280,6 +289,9 @@ export function WaiterScreen() {
       (draft.items ?? []).map((item) => ({
         productId: item.productId,
         name: item.productName,
+        // Order lines snapshot a name only, so a reopened draft finds its
+        // icon back through the live menu; a since-retired dish falls back.
+        icon: iconOf(allProducts.find((p) => p.id === item.productId) ?? {}),
         price: toNumber(item.unitPrice),
         quantity: item.quantity,
         notes: item.notes ?? undefined,

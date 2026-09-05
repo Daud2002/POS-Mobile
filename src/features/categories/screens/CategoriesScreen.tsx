@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderPlus, Pencil, Trash2 } from 'lucide-react-native';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FlatList, RefreshControl, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -20,6 +20,7 @@ import { Text } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/Toast';
 import { categoryIcon } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
+import { sortBySortOrder } from '@/lib/sortOrder';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { CategoryFormSheet } from '../components/CategoryFormSheet';
@@ -72,7 +73,8 @@ export function CategoriesScreen() {
     onError: (error) => fail(error, 'Could not delete the category.'),
   });
 
-  const categories = query.data ?? [];
+  // Listed in menu order, so the owner sees what the till will show.
+  const categories = useMemo(() => sortBySortOrder(query.data ?? []), [query.data]);
 
   return (
     <SafeAreaView
@@ -132,7 +134,12 @@ export function CategoriesScreen() {
                 </Text>
 
                 <View style={{ flex: 1 }}>
-                  <Text variant="bodyMedium">{item.name}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
+                    <Text variant="bodyMedium" style={{ flexShrink: 1 }}>{item.name}</Text>
+                    {item.sortOrder != null ? (
+                      <Text variant="caption" color="mutedForeground">#{item.sortOrder}</Text>
+                    ) : null}
+                  </View>
                   {item.description ? (
                     <Text variant="caption" color="mutedForeground" numberOfLines={2}>
                       {item.description}

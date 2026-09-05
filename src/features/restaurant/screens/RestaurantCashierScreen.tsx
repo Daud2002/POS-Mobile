@@ -13,6 +13,7 @@ import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
+import { sortBySortOrder } from '@/lib/sortOrder';
 import { orderDestination, orderLabel, orderStatusLabel } from '@/lib/orderLabel';
 import { parseDiscountInput, previewDiscount } from '@/lib/discount';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
@@ -121,16 +122,23 @@ export function RestaurantCashierScreen() {
 
   const orders = ordersQuery.data ?? [];
   const allProducts = productsQuery.data ?? [];
-  const categories = categoriesQuery.data ?? [];
+  // The owner's menu order, the same one the web till shows.
+  const categories = useMemo(
+    () => sortBySortOrder(categoriesQuery.data ?? []),
+    [categoriesQuery.data],
+  );
 
   // Menu is organised by category, so the composer filters the same way the
-  // waiter screen does.
+  // waiter screen does. Sorted AFTER filtering, so one category reads in the
+  // same relative order its dishes have under "All".
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return allProducts.filter((p) => {
-      if (activeCategory !== 'all' && p.categoryId !== activeCategory) return false;
-      return q ? p.name?.toLowerCase().includes(q) : true;
-    });
+    return sortBySortOrder(
+      allProducts.filter((p) => {
+        if (activeCategory !== 'all' && p.categoryId !== activeCategory) return false;
+        return q ? p.name?.toLowerCase().includes(q) : true;
+      }),
+    );
   }, [allProducts, search, activeCategory]);
 
   const categoryCounts = useMemo(() => {

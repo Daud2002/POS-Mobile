@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/Select';
 import { Sheet } from '@/components/ui/Sheet';
 import { DEFAULT_PRODUCT_EMOJI } from '@/constants/emojis';
 import { toNumber } from '@/lib/format';
+import { parseSortOrderInput } from '@/lib/sortOrder';
 import { useTheme } from '@/theme/ThemeProvider';
 
 /** Numeric fields arrive as strings from TextInput, so parse and validate here. */
@@ -33,6 +34,11 @@ const productSchema = z.object({
   categoryId: z.string().min(1, 'Choose a category'),
   sku: z.string().optional(),
   barcode: z.string().optional(),
+  /** Text from the field. Blank leaves the server to place a new one last. */
+  sortOrder: z
+    .string()
+    .optional()
+    .refine((value) => parseSortOrderInput(value ?? '') !== null, 'Enter a whole number'),
 });
 
 type ProductForm = z.infer<typeof productSchema>;
@@ -59,6 +65,7 @@ const EMPTY_FORM: ProductForm = {
   categoryId: '',
   sku: '',
   barcode: '',
+  sortOrder: '',
 };
 
 /** Create/edit product form. Fields mirror the web dialog exactly. */
@@ -105,6 +112,7 @@ export function ProductFormSheet({
             categoryId: product.categoryId ?? '',
             sku: product.sku ?? '',
             barcode: product.barcode ?? '',
+            sortOrder: product.sortOrder == null ? '' : String(product.sortOrder),
           }
         : EMPTY_FORM,
     );
@@ -125,6 +133,9 @@ export function ProductFormSheet({
       barcode: values.barcode?.trim() || undefined,
       image: values.image,
       categoryId: values.categoryId,
+      // Undefined when blank: a new product goes last; an edit keeps its
+      // number. The schema has already refused anything unparseable.
+      sortOrder: parseSortOrderInput(values.sortOrder ?? '') ?? undefined,
     });
     onClose();
   };
@@ -276,6 +287,23 @@ export function ProductFormSheet({
             }))}
             placeholder="Choose a category"
             error={errors.categoryId?.message}
+          />
+        )}
+      />
+
+      <Controller
+        control={control}
+        name="sortOrder"
+        render={({ field: { onChange, onBlur, value } }) => (
+          <Input
+            label="Sort"
+            value={value ?? ''}
+            onChangeText={onChange}
+            onBlur={onBlur}
+            placeholder="Auto"
+            keyboardType="number-pad"
+            hint="Lower numbers show first on the till. Each product needs its own; blank adds it at the end."
+            error={errors.sortOrder?.message}
           />
         )}
       />

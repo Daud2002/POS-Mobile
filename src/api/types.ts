@@ -349,6 +349,11 @@ export interface Category {
   description?: string;
   image?: string;
   isActive: boolean;
+  /**
+   * Menu position, lowest first; unique within the store. Null on rows that
+   * predate the column — sort those last. See lib/sortOrder.ts.
+   */
+  sortOrder?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -367,6 +372,8 @@ export interface Product {
   /** Holds an EMOJI, not a URL — e.g. '📦'. The API field is `image`. */
   image?: string;
   isActive: boolean;
+  /** Till position across the whole store, lowest first. Null = legacy row. */
+  sortOrder?: number | null;
   categoryId?: string;
   category?: Category;
   createdAt: string;
@@ -583,6 +590,8 @@ export interface ProductPayload {
   image?: string;
   categoryId?: string;
   isActive?: boolean;
+  /** Omit on create to place it last; omit on update to keep its number. */
+  sortOrder?: number;
 }
 
 export interface CategoryPayload {
@@ -590,6 +599,8 @@ export interface CategoryPayload {
   description?: string;
   /** An emoji. Null clears it — undefined would leave a PATCH untouched. */
   image?: string | null;
+  /** Omit on create to place it last; omit on update to keep its number. */
+  sortOrder?: number;
   /** The web app omits this, which is a bug — mobile always sends it. */
   storeId?: string;
 }

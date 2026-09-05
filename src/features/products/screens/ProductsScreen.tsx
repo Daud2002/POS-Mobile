@@ -115,6 +115,7 @@ export function ProductsScreen() {
                       {item.name}
                     </Text>
                     <Text variant="caption" color="mutedForeground">
+                      {item.sortOrder != null ? `#${item.sortOrder} · ` : ''}
                       {item.category?.name ?? 'Uncategorized'}
                       {item.sku ? ` · ${item.sku}` : ''}
                     </Text>

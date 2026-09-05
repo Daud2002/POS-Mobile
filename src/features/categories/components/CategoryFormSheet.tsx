@@ -8,12 +8,18 @@ import { Button } from '@/components/ui/Button';
 import { IconPicker } from '@/components/ui/IconPicker';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
+import { parseSortOrderInput } from '@/lib/sortOrder';
 
 const categorySchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
   /** Optional: a category with no icon simply lends none to its dishes. */
   image: z.string().optional(),
+  /** Text from the field. Blank leaves the server to place a new one last. */
+  sortOrder: z
+    .string()
+    .optional()
+    .refine((value) => parseSortOrderInput(value ?? '') !== null, 'Enter a whole number'),
 });
 
 type CategoryForm = z.infer<typeof categorySchema>;
@@ -26,7 +32,7 @@ interface CategoryFormSheetProps {
   onSubmit: (payload: CategoryPayload) => Promise<unknown>;
 }
 
-/** Create/edit a category. Two fields, matching the web dialog. */
+/** Create/edit a category. Fields match the web dialog. */
 export function CategoryFormSheet({
   open,
   onClose,
@@ -41,7 +47,7 @@ export function CategoryFormSheet({
     formState: { errors },
   } = useForm<CategoryForm>({
     resolver: zodResolver(categorySchema),
-    defaultValues: { name: '', description: '', image: '' },
+    defaultValues: { name: '', description: '', image: '', sortOrder: '' },
   });
 
   useEffect(() => {
@@ -50,6 +56,7 @@ export function CategoryFormSheet({
       name: category?.name ?? '',
       description: category?.description ?? '',
       image: category?.image ?? '',
+      sortOrder: category?.sortOrder == null ? '' : String(category.sortOrder),
     });
   }, [open, category, reset]);
 
@@ -59,6 +66,9 @@ export function CategoryFormSheet({
       description: values.description?.trim() || undefined,
       // Null, not '', so a cleared icon reads as unset to every consumer.
       image: values.image || null,
+      // Undefined when blank: a new category goes last; an edit keeps its
+      // number. The schema has already refused anything unparseable.
+      sortOrder: parseSortOrderInput(values.sortOrder ?? '') ?? undefined,
     });
 
   return (
@@ -124,6 +134,23 @@ export function CategoryFormSheet({
             onBlur={onBlur}
             placeholder="Optional"
             multiline
+          />
+        )}
+      />
+
+      <Controller
+        control={control}
+        name="sortOrder"
+        render={({ field: { onChange, onBlur, value } }) => (
+          <Input
+            label="Sort"
+            value={value ?? ''}
+            onChangeText={onChange}
+            onBlur={onBlur}
+            placeholder="Auto"
+            keyboardType="number-pad"
+            hint="Lower numbers show first on the till. Each category needs its own; blank adds it at the end."
+            error={errors.sortOrder?.message}
           />
         )}
       />
