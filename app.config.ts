@@ -66,6 +66,9 @@ const config: ExpoConfig = {
     'expo-secure-store',
     'expo-font',
     'expo-sharing',
+    // The kitchen bell. A native module: the dev client and store builds have
+    // to be rebuilt after adding it.
+    'expo-audio',
     [
       'expo-splash-screen',
       {

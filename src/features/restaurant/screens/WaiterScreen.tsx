@@ -1,6 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import {
   Send,
   Save,
@@ -10,18 +13,22 @@ import {
   ClipboardList,
   ChevronRight,
   ShoppingBag,
+  Trash2,
 } from 'lucide-react-native';
 
 import { restaurantApi, productsApi, categoriesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
+import type { RestaurantTabParamList } from '@/app/navigation/types';
 import { Screen } from '@/components/layout';
-import { Button, EmptyState, Input, Sheet, Text, useToast } from '@/components/ui';
+import { Button, ConfirmDialog, EmptyState, Input, Sheet, Text, useToast } from '@/components/ui';
 import { categoryIcon, iconFor } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
+import { categorySkipsKitchen } from '@/lib/kitchen';
+import { orderDisplayStatus, orderStatusLabel } from '@/lib/orderLabel';
 import { sortBySortOrder } from '@/lib/sortOrder';
 import { tint, useTheme } from '@/theme';
 import type { Category, Decimal, Product, RestaurantOrder, RestaurantTable } from '@/api/types';
@@ -35,12 +42,14 @@ interface CartLine {
   price: number;
   quantity: number;
   notes?: string;
-  /** Pack this line to go. Only offered on a dine-out order. */
+  /**
+   * Pack this line to go. Any packed line makes the order a dine-out; the
+   * waiter never picks dine-in versus dine-out up front any more.
+   */
   isParcel?: boolean;
+  /** Served from the counter, not cooked — a drink. Never reaches the kitchen. */
+  skipKitchen: boolean;
 }
-
-/** What a waiter can punch. Takeaway and delivery belong to the cashier. */
-type WaiterOrderType = 'dine_in' | 'dine_out';
 
 /**
  * Waiter order entry.
@@ -50,6 +59,9 @@ type WaiterOrderType = 'dine_in' | 'dine_out';
  * table, taps a category, adds items in a sheet, closes it, and repeats — then
  * reviews everything once before it goes to the kitchen. Only one category's
  * items are ever mounted, which also keeps the screen light.
+ *
+ * Dine-in versus dine-out is not chosen: every line carries its own toggle,
+ * and packing any line is what makes the order a dine-out.
  */
 export function WaiterScreen() {
   const theme = useTheme();
@@ -57,15 +69,14 @@ export function WaiterScreen() {
   const storeId = useStoreId();
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
+  const navigation = useNavigation<BottomTabNavigationProp<RestaurantTabParamList, 'Tables'>>();
+  const route = useRoute<RouteProp<RestaurantTabParamList, 'Tables'>>();
 
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
-  /**
-   * Dine-out means the guests eat in AND take a parcel home, so it still needs
-   * a table — the only difference is that some lines get boxed.
-   */
-  const [orderType, setOrderType] = useState<WaiterOrderType>('dine_in');
   const [appendTo, setAppendTo] = useState<RestaurantOrder | null>(null);
   const [editingDraft, setEditingDraft] = useState<RestaurantOrder | null>(null);
+  /** The draft the waiter has asked to bin, pending confirmation. */
+  const [discarding, setDiscarding] = useState<RestaurantOrder | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [openCategory, setOpenCategory] = useState<Category | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -135,13 +146,31 @@ export function WaiterScreen() {
 
   const tables = tablesQuery.data ?? [];
   const drafts = draftsQuery.data ?? [];
-  const liveOrders = liveQuery.data ?? [];
+  const liveOrders = useMemo(() => liveQuery.data ?? [], [liveQuery.data]);
   const allProducts = productsQuery.data ?? [];
   // The owner's menu order, the same one the web screens show.
   const categories = useMemo(
     () => sortBySortOrder(categoriesQuery.data ?? []),
     [categoriesQuery.data],
   );
+
+  /**
+   * Arriving from My Orders with an order in hand: open the menu as a new
+   * round on it. The param is consumed straight away so that returning to
+   * this tab later does not silently re-arm the same order.
+   */
+  const handoff = route.params?.appendToOrderId;
+  useEffect(() => {
+    if (!handoff) return;
+    const order = liveOrders.find((o) => o.id === handoff);
+    if (!order) return;
+    setAppendTo(order);
+    setEditingDraft(null);
+    setSelectedTable(null);
+    setCart([]);
+    navigation.setParams({ appendToOrderId: undefined });
+    scrollToMenu();
+  }, [handoff, liveOrders, navigation, scrollToMenu]);
 
   /**
    * Products bucketed by category, so opening one is a lookup not a scan.
@@ -171,6 +200,9 @@ export function WaiterScreen() {
   const iconOf = (product: { categoryId?: string; image?: string | null }) =>
     iconFor(product, product.categoryId ? categoryById.get(product.categoryId) : null);
 
+  const skipsKitchen = (product: { categoryId?: string }) =>
+    categorySkipsKitchen(product.categoryId ? categoryById.get(product.categoryId) : null);
+
   const addToCart = (product: {
     id: string;
     name: string;
@@ -194,6 +226,7 @@ export function WaiterScreen() {
           icon: iconOf(product),
           price: toNumber(product.price),
           quantity: 1,
+          skipKitchen: skipsKitchen(product),
         },
       ];
     });
@@ -215,17 +248,24 @@ export function WaiterScreen() {
     setEditingDraft(null);
     setReviewOpen(false);
     setOpenCategory(null);
-    setOrderType('dine_in');
   };
+
+  /**
+   * Dine-in or dine-out is a fact about the lines, not a choice: pack any of
+   * them and it is a dine-out. The server derives the same thing; this is
+   * only so the request says what the waiter sees.
+   */
+  const hasParcel = cart.some((l) => l.isParcel);
+  const orderType = hasParcel ? 'dine_out' : 'dine_in';
+  /** Nothing to cook — drinks only — so the button should not promise the kitchen. */
+  const needsKitchen = cart.some((l) => !l.skipKitchen);
 
   const itemsPayload = () =>
     cart.map((l) => ({
       productId: l.productId,
       quantity: l.quantity,
       notes: l.notes?.trim() || undefined,
-      // Only meaningful on a dine-out order; sending it otherwise would put a
-      // stray PARCEL flag on a plain dine-in ticket.
-      isParcel: orderType === 'dine_out' ? !!l.isParcel : undefined,
+      isParcel: !!l.isParcel,
     }));
 
   const toggleParcel = (productId: string) =>
@@ -246,8 +286,14 @@ export function WaiterScreen() {
     setSubmitting(true);
     try {
       if (appendTo) {
+        // The kitchen gets a ticket with only these lines — and none at all
+        // when the round is drinks alone.
         await restaurantApi.addItems(appendTo.id, itemsPayload());
-        toast.success(`Added to ${appendTo.tableName ?? 'order'}`);
+        toast.success(
+          appendTo.billPrinted
+            ? `Added to ${appendTo.tableName ?? 'order'} — the cashier will reprint the bill`
+            : `Added to ${appendTo.tableName ?? 'order'}`,
+        );
       } else if (editingDraft) {
         await restaurantApi.updateDraft(editingDraft.id, {
           items: itemsPayload(),
@@ -256,7 +302,7 @@ export function WaiterScreen() {
         });
         if (!asDraft) {
           await restaurantApi.punch(editingDraft.id, selectedTable?.id);
-          toast.success('Order sent to kitchen');
+          toast.success(needsKitchen ? 'Order sent to kitchen' : 'Order placed — nothing for the kitchen');
         } else {
           toast.success('Draft saved');
         }
@@ -267,7 +313,13 @@ export function WaiterScreen() {
           items: itemsPayload(),
           isDraft: asDraft,
         });
-        toast.success(asDraft ? 'Draft saved' : 'Order sent to kitchen');
+        toast.success(
+          asDraft
+            ? 'Draft saved'
+            : needsKitchen
+              ? 'Order sent to kitchen'
+              : 'Order placed — nothing for the kitchen',
+        );
       }
       reset();
       refresh();
@@ -286,18 +338,37 @@ export function WaiterScreen() {
     setAppendTo(null);
     setSelectedTable(tables.find((t) => t.id === draft.tableId) ?? null);
     setCart(
-      (draft.items ?? []).map((item) => ({
-        productId: item.productId,
-        name: item.productName,
-        // Order lines snapshot a name only, so a reopened draft finds its
-        // icon back through the live menu; a since-retired dish falls back.
-        icon: iconOf(allProducts.find((p) => p.id === item.productId) ?? {}),
-        price: toNumber(item.unitPrice),
-        quantity: item.quantity,
-        notes: item.notes ?? undefined,
-      })),
+      (draft.items ?? []).map((item) => {
+        const product = allProducts.find((p) => p.id === item.productId);
+        return {
+          productId: item.productId,
+          name: item.productName,
+          // Order lines snapshot a name only, so a reopened draft finds its
+          // icon back through the live menu; a since-retired dish falls back.
+          icon: iconOf(product ?? {}),
+          price: toNumber(item.unitPrice),
+          quantity: item.quantity,
+          notes: item.notes ?? undefined,
+          isParcel: !!item.isParcel,
+          skipKitchen: item.skipKitchen ?? (product ? skipsKitchen(product) : false),
+        };
+      }),
     );
     setReviewOpen(true);
+  };
+
+  /** Bins a draft. If it was the one open in the review sheet, that clears too. */
+  const discardDraft = async () => {
+    if (!discarding) return;
+    try {
+      await restaurantApi.discardDraft(discarding.id);
+      toast.success('Draft discarded');
+      if (editingDraft?.id === discarding.id) reset();
+      setDiscarding(null);
+      refresh();
+    } catch (error: any) {
+      toast.error(error?.message ?? 'Could not discard the draft');
+    }
   };
 
   const destination = appendTo
@@ -350,6 +421,7 @@ export function WaiterScreen() {
             const live = liveOrders.find((o) => o.tableId === table.id);
             const free = table.status === 'free';
             const selected = selectedTable?.id === table.id;
+            const active = selected || appendTo?.tableId === table.id;
             return (
               <Pressable
                 key={table.id}
@@ -372,12 +444,12 @@ export function WaiterScreen() {
                   styles.tableCard,
                   {
                     borderRadius: theme.radius.md,
-                    borderColor: selected || appendTo?.tableId === table.id
+                    borderColor: active
                       ? theme.colors.primary
                       : free
                         ? theme.colors.border
                         : tint(theme.colors.warning, 0.5),
-                    backgroundColor: selected || appendTo?.tableId === table.id
+                    backgroundColor: active
                       ? tint(theme.colors.primary, 0.1)
                       : free
                         ? theme.colors.card
@@ -388,9 +460,10 @@ export function WaiterScreen() {
                 <Text variant="bodySemibold" numberOfLines={1}>{table.name}</Text>
                 <Text
                   variant="caption"
+                  numberOfLines={1}
                   style={{ color: free ? theme.colors.success : theme.colors.warning }}
                 >
-                  {free ? 'Free' : 'Occupied'}
+                  {free ? 'Free' : live ? orderStatusLabel(orderDisplayStatus(live)) : 'Occupied'}
                 </Text>
               </Pressable>
             );
@@ -423,6 +496,15 @@ export function WaiterScreen() {
                     </Text>
                   </View>
                   <Text variant="bodySemibold">{format(toNumber(draft.total))}</Text>
+                  {/* Drafts are scratch, so any waiter can bin one. */}
+                  <Pressable
+                    onPress={() => setDiscarding(draft)}
+                    hitSlop={10}
+                    accessibilityLabel="Discard draft"
+                    style={styles.trash}
+                  >
+                    <Trash2 size={16} color={theme.colors.destructive} />
+                  </Pressable>
                 </Pressable>
               ))}
             </View>
@@ -443,6 +525,7 @@ export function WaiterScreen() {
             const chosen = cart.filter((line) =>
               productsByCategory.get(category.id)?.some((p) => p.id === line.productId),
             ).length;
+            const counter = categorySkipsKitchen(category);
 
             return (
               <Pressable
@@ -465,6 +548,7 @@ export function WaiterScreen() {
                   <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                     {count} item{count === 1 ? '' : 's'}
                     {chosen ? ` · ${chosen} selected` : ''}
+                    {counter ? ' · served from the counter' : ''}
                     {category.description ? ` · ${category.description}` : ''}
                   </Text>
                 </View>
@@ -486,55 +570,53 @@ export function WaiterScreen() {
         title={openCategory?.name ?? ''}
         description={openCategory?.description}
       >
-        <ScrollView style={{ maxHeight: 460 }}>
-          <View style={{ gap: 8 }}>
-            {(productsByCategory.get(openCategory?.id ?? '') ?? []).map((product) => {
-              const qty = qtyOf(product.id);
-              return (
-                <Pressable
-                  key={product.id}
-                  onPress={() => addToCart(product as any)}
-                  style={[
-                    styles.row,
-                    {
-                      borderColor: qty ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: qty ? tint(theme.colors.primary, 0.06) : theme.colors.card,
-                      borderRadius: theme.radius.md,
-                    },
-                  ]}
-                >
-                  <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
-                    <Text variant="caption" color="mutedForeground">
-                      {format(toNumber(product.price))}
-                    </Text>
+        <View style={{ gap: theme.spacing.sm }}>
+          {(productsByCategory.get(openCategory?.id ?? '') ?? []).map((product) => {
+            const qty = qtyOf(product.id);
+            return (
+              <Pressable
+                key={product.id}
+                onPress={() => addToCart(product as any)}
+                style={[
+                  styles.row,
+                  {
+                    borderColor: qty ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: qty ? tint(theme.colors.primary, 0.06) : theme.colors.card,
+                    borderRadius: theme.radius.md,
+                  },
+                ]}
+              >
+                <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
+                  <Text variant="caption" color="mutedForeground">
+                    {format(toNumber(product.price))}
+                  </Text>
+                </View>
+
+                {qty > 0 ? (
+                  <View style={styles.stepper}>
+                    <Pressable onPress={() => changeQty(product.id, -1)} hitSlop={8}>
+                      <Minus size={16} color={theme.colors.foreground} />
+                    </Pressable>
+                    <Text variant="bodySemibold">{qty}</Text>
+                    <Pressable onPress={() => changeQty(product.id, 1)} hitSlop={8}>
+                      <Plus size={16} color={theme.colors.foreground} />
+                    </Pressable>
                   </View>
+                ) : (
+                  <Plus size={18} color={theme.colors.mutedForeground} />
+                )}
+              </Pressable>
+            );
+          })}
 
-                  {qty > 0 ? (
-                    <View style={styles.stepper}>
-                      <Pressable onPress={() => changeQty(product.id, -1)} hitSlop={8}>
-                        <Minus size={16} color={theme.colors.foreground} />
-                      </Pressable>
-                      <Text variant="bodySemibold">{qty}</Text>
-                      <Pressable onPress={() => changeQty(product.id, 1)} hitSlop={8}>
-                        <Plus size={16} color={theme.colors.foreground} />
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <Plus size={18} color={theme.colors.mutedForeground} />
-                  )}
-                </Pressable>
-              );
-            })}
-
-            {(productsByCategory.get(openCategory?.id ?? '') ?? []).length === 0 && (
-              <Text variant="caption" color="mutedForeground">
-                No items in this category.
-              </Text>
-            )}
-          </View>
-        </ScrollView>
+          {(productsByCategory.get(openCategory?.id ?? '') ?? []).length === 0 && (
+            <Text variant="caption" color="mutedForeground">
+              No items in this category.
+            </Text>
+          )}
+        </View>
       </Sheet>
 
       {/* -------------------------------------------------- review sheet */}
@@ -543,34 +625,99 @@ export function WaiterScreen() {
         onClose={() => setReviewOpen(false)}
         title={appendTo ? 'Add a round' : editingDraft ? 'Edit draft' : 'Review order'}
         description={destination}
+        footer={
+          <View style={{ flex: 1, gap: theme.spacing.sm }}>
+            <Button
+              onPress={() => submit(false)}
+              loading={submitting}
+              disabled={!cart.length}
+              icon={<Send size={16} color={theme.colors.primaryForeground} />}
+              label={
+                appendTo
+                  ? needsKitchen ? 'Send round to kitchen' : 'Add to order'
+                  : needsKitchen ? 'Send to kitchen' : 'Place order'
+              }
+            />
+            {!appendTo && (
+              <>
+                <Button
+                  variant="outline"
+                  onPress={() => submit(true)}
+                  disabled={submitting || !cart.length}
+                  icon={<Save size={16} color={theme.colors.foreground} />}
+                  label="Save as draft"
+                />
+                {editingDraft && (
+                  <Button
+                    variant="outline"
+                    onPress={() => setDiscarding(editingDraft)}
+                    disabled={submitting}
+                    icon={<Trash2 size={16} color={theme.colors.destructive} />}
+                    label="Discard draft"
+                  />
+                )}
+                <Text variant="caption" color="mutedForeground">
+                  A draft does not reserve the table — anyone can still take it.
+                </Text>
+              </>
+            )}
+          </View>
+        }
       >
-        <ScrollView style={{ maxHeight: 420 }}>
-          {cart.length === 0 ? (
-            <Text variant="caption" color="mutedForeground" style={{ paddingVertical: 20 }}>
-              Nothing added yet.
-            </Text>
-          ) : (
-            <View style={{ gap: 12 }}>
-              {cart.map((line) => (
-                <View key={line.productId} style={{ gap: 6 }}>
-                  <View style={styles.cartRow}>
-                    <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text variant="bodySemibold" numberOfLines={1}>{line.name}</Text>
-                      <Text variant="caption" color="mutedForeground">
-                        {format(line.price)} · {format(line.price * line.quantity)}
-                      </Text>
-                    </View>
-                    <View style={styles.stepper}>
-                      <Pressable onPress={() => changeQty(line.productId, -1)} hitSlop={8}>
-                        <Minus size={16} color={theme.colors.foreground} />
-                      </Pressable>
-                      <Text variant="bodySemibold">{line.quantity}</Text>
-                      <Pressable onPress={() => changeQty(line.productId, 1)} hitSlop={8}>
-                        <Plus size={16} color={theme.colors.foreground} />
-                      </Pressable>
-                    </View>
+        {/*
+          The order's type, read back from the lines rather than chosen:
+          mark anything as a parcel and this becomes a dine-out.
+        */}
+        {cart.length > 0 && !appendTo && (
+          <View style={styles.typeRow}>
+            <View
+              style={[
+                styles.typePill,
+                {
+                  borderColor: hasParcel ? theme.colors.info : theme.colors.border,
+                  backgroundColor: hasParcel ? `${theme.colors.info}1A` : 'transparent',
+                },
+              ]}
+            >
+              <Text variant="caption" style={{ color: hasParcel ? theme.colors.info : theme.colors.mutedForeground }}>
+                {hasParcel ? 'Dine-out — some items packed' : 'Dine-in'}
+              </Text>
+            </View>
+            {!needsKitchen && (
+              <Text variant="caption" color="mutedForeground">Drinks only · not sent to kitchen</Text>
+            )}
+          </View>
+        )}
+
+        {cart.length === 0 ? (
+          <Text variant="caption" color="mutedForeground" style={{ paddingVertical: theme.spacing.xl }}>
+            Nothing added yet.
+          </Text>
+        ) : (
+          <View style={{ gap: theme.spacing.md }}>
+            {cart.map((line) => (
+              <View key={line.productId} style={{ gap: theme.spacing.xs }}>
+                <View style={styles.cartRow}>
+                  <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text variant="bodySemibold" numberOfLines={1}>{line.name}</Text>
+                    <Text variant="caption" color="mutedForeground">
+                      {format(line.price)} · {format(line.price * line.quantity)}
+                      {line.skipKitchen ? ' · counter' : ''}
+                    </Text>
                   </View>
+                  <View style={styles.stepper}>
+                    <Pressable onPress={() => changeQty(line.productId, -1)} hitSlop={8}>
+                      <Minus size={16} color={theme.colors.foreground} />
+                    </Pressable>
+                    <Text variant="bodySemibold">{line.quantity}</Text>
+                    <Pressable onPress={() => changeQty(line.productId, 1)} hitSlop={8}>
+                      <Plus size={16} color={theme.colors.foreground} />
+                    </Pressable>
+                  </View>
+                </View>
+                {/* Drinks never reach the kitchen, so a note would go nowhere. */}
+                {!line.skipKitchen && (
                   <Input
                     value={line.notes ?? ''}
                     onChangeText={(text) =>
@@ -582,115 +729,66 @@ export function WaiterScreen() {
                     }
                     placeholder="Note for kitchen…"
                   />
-                  {/* Per LINE, not per order: the whole point of dine-out is
-                      that some dishes stay on the table and others go home. */}
-                  {orderType === 'dine_out' && !appendTo && (
-                    <Pressable
-                      onPress={() => toggleParcel(line.productId)}
-                      style={[
-                        styles.parcelToggle,
-                        {
-                          borderColor: line.isParcel
-                            ? theme.colors.info
-                            : theme.colors.border,
-                          backgroundColor: line.isParcel
-                            ? `${theme.colors.info}1A`
-                            : 'transparent',
-                        },
-                      ]}
-                    >
-                      <ShoppingBag
-                        size={13}
-                        color={line.isParcel ? theme.colors.info : theme.colors.mutedForeground}
-                      />
-                      <Text
-                        variant="caption"
-                        style={{
-                          color: line.isParcel
-                            ? theme.colors.info
-                            : theme.colors.mutedForeground,
-                        }}
-                      >
-                        {line.isParcel ? 'Packed to go' : 'Mark as parcel'}
-                      </Text>
-                    </Pressable>
-                  )}
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Dine-out still needs a table; only the parcel marking differs. */}
-          {!appendTo && (
-            <View style={{ gap: 6, paddingTop: 4 }}>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {(['dine_in', 'dine_out'] as const).map((option) => (
-                  <Pressable
-                    key={option}
-                    onPress={() => setOrderType(option)}
-                    style={[
-                      styles.typePill,
-                      {
-                        borderColor:
-                          orderType === option ? theme.colors.primary : theme.colors.border,
-                        backgroundColor:
-                          orderType === option
-                            ? `${theme.colors.primary}1A`
-                            : 'transparent',
-                      },
-                    ]}
+                )}
+                {/* Per LINE, on every line, including a further round: any
+                    dish can go home in a box, and marking one is what makes
+                    the order a dine-out. */}
+                <Pressable
+                  onPress={() => toggleParcel(line.productId)}
+                  style={[
+                    styles.parcelToggle,
+                    {
+                      borderColor: line.isParcel
+                        ? theme.colors.info
+                        : theme.colors.border,
+                      backgroundColor: line.isParcel
+                        ? `${theme.colors.info}1A`
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <ShoppingBag
+                    size={13}
+                    color={line.isParcel ? theme.colors.info : theme.colors.mutedForeground}
+                  />
+                  <Text
+                    variant="caption"
+                    style={{
+                      color: line.isParcel
+                        ? theme.colors.info
+                        : theme.colors.mutedForeground,
+                    }}
                   >
-                    <Text variant="caption">
-                      {option === 'dine_in' ? 'Dine-in' : 'Dine-out'}
-                    </Text>
-                  </Pressable>
-                ))}
+                    {line.isParcel ? 'Dine-out · packed to go' : 'Dine-in · tap to pack'}
+                  </Text>
+                </Pressable>
               </View>
-              {orderType === 'dine_out' && (
-                <Text variant="caption" color="mutedForeground">
-                  Eating in and taking a parcel. Mark which items to pack — one
-                  bill covers both.
-                </Text>
-              )}
-            </View>
-          )}
-
-          <View style={[styles.totalRow, { borderColor: theme.colors.border }]}>
-            <Text variant="bodySemibold">Total</Text>
-            <Text variant="bodySemibold">{format(cartTotal)}</Text>
+            ))}
           </View>
+        )}
 
-          <View style={{ gap: 8, paddingTop: 12 }}>
-            <Button
-              onPress={() => submit(false)}
-              loading={submitting}
-              disabled={!cart.length}
-              icon={<Send size={16} color={theme.colors.primaryForeground} />}
-              label={appendTo ? 'Send round to kitchen' : 'Send to kitchen'}
-            />
-            {!appendTo && (
-              <>
-                <Button
-                  variant="outline"
-                  onPress={() => submit(true)}
-                  disabled={submitting || !cart.length}
-                  icon={<Save size={16} color={theme.colors.foreground} />}
-                  label="Save as draft"
-                />
-                <Text variant="caption" color="mutedForeground">
-                  A draft does not reserve the table — anyone can still take it.
-                </Text>
-              </>
-            )}
-          </View>
-        </ScrollView>
+        <View style={[styles.totalRow, { borderColor: theme.colors.border }]}>
+          <Text variant="bodySemibold">Total</Text>
+          <Text variant="bodySemibold">{format(cartTotal)}</Text>
+        </View>
       </Sheet>
+
+      <ConfirmDialog
+        open={!!discarding}
+        title="Discard this draft?"
+        description={`${discarding?.tableName ?? 'No table'} · ${discarding?.items?.length ?? 0} items. It was never sent to the kitchen, so nothing else changes.`}
+        confirmLabel="Discard"
+        variant="destructive"
+        onConfirm={discardDraft}
+        onDecline={() => setDiscarding(null)}
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   footerBar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   typePill: {
     borderWidth: 1,
     borderRadius: 999,
@@ -719,11 +817,11 @@ const styles = StyleSheet.create({
   },
   cartRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  trash: { paddingLeft: 6, paddingVertical: 4 },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingTop: 12,
-    marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
 });

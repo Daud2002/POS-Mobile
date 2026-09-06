@@ -57,5 +57,8 @@ export const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string }> = [
 
 export function paymentLabel(method?: PaymentMethod | null): string {
   if (!method) return 'Unpaid';
+  // Not in PAYMENT_METHODS: it is never picked on the general POS, only
+  // recorded by the restaurant till. See lib/payment.ts for the amounts.
+  if (method === 'partial') return 'Split';
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }

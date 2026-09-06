@@ -1,14 +1,20 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { Controller, useForm } from 'react-hook-form';
+import { StyleSheet, View } from 'react-native';
 import { z } from 'zod';
 
 import { Category, CategoryPayload } from '@/api/types';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { Button } from '@/components/ui/Button';
 import { IconPicker } from '@/components/ui/IconPicker';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
+import { Switch } from '@/components/ui/Switch';
+import { Text } from '@/components/ui/Text';
+import { categorySkipsKitchen } from '@/lib/kitchen';
 import { parseSortOrderInput } from '@/lib/sortOrder';
+import { useTheme } from '@/theme';
 
 const categorySchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -20,6 +26,8 @@ const categorySchema = z.object({
     .string()
     .optional()
     .refine((value) => parseSortOrderInput(value ?? '') !== null, 'Enter a whole number'),
+  /** Restaurant only: items are served from the counter, never cooked. */
+  skipKitchen: z.boolean().optional(),
 });
 
 type CategoryForm = z.infer<typeof categorySchema>;
@@ -40,14 +48,20 @@ export function CategoryFormSheet({
   saving,
   onSubmit,
 }: CategoryFormSheetProps) {
+  const theme = useTheme();
+  const { user } = useAuth();
+  // The kitchen switch only means something where there is a kitchen.
+  const isRestaurant = user?.accountType === 'restaurant';
+
   const {
     control,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<CategoryForm>({
     resolver: zodResolver(categorySchema),
-    defaultValues: { name: '', description: '', image: '', sortOrder: '' },
+    defaultValues: { name: '', description: '', image: '', sortOrder: '', skipKitchen: false },
   });
 
   useEffect(() => {
@@ -57,8 +71,12 @@ export function CategoryFormSheet({
       description: category?.description ?? '',
       image: category?.image ?? '',
       sortOrder: category?.sortOrder == null ? '' : String(category.sortOrder),
+      skipKitchen: !!category?.skipKitchen,
     });
   }, [open, category, reset]);
+
+  // A name like "Drinks" skips the kitchen on its own; the switch shows that.
+  const nameSkips = categorySkipsKitchen({ name: watch('name') });
 
   const submit = (values: CategoryForm) =>
     onSubmit({
@@ -69,6 +87,7 @@ export function CategoryFormSheet({
       // Undefined when blank: a new category goes last; an edit keeps its
       // number. The schema has already refused anything unparseable.
       sortOrder: parseSortOrderInput(values.sortOrder ?? '') ?? undefined,
+      ...(isRestaurant ? { skipKitchen: !!values.skipKitchen } : {}),
     });
 
   return (
@@ -154,6 +173,44 @@ export function CategoryFormSheet({
           />
         )}
       />
+
+      {isRestaurant && (
+        <Controller
+          control={control}
+          name="skipKitchen"
+          render={({ field: { onChange, value } }) => (
+            <View
+              style={[
+                styles.switchRow,
+                { borderColor: theme.colors.border, borderRadius: theme.radius.md },
+              ]}
+            >
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text variant="smallMedium">Served from the counter</Text>
+                <Text variant="caption" color="mutedForeground">
+                  Items in this category are never sent to the kitchen — drinks, for example.
+                  Categories named Drinks or Beverages skip it automatically.
+                </Text>
+              </View>
+              <Switch
+                value={!!value || nameSkips}
+                disabled={!value && nameSkips}
+                onValueChange={onChange}
+              />
+            </View>
+          )}
+        />
+      )}
     </Sheet>
   );
 }
+
+const styles = StyleSheet.create({
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    padding: 12,
+  },
+});

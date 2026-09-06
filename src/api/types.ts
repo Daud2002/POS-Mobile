@@ -47,7 +47,15 @@ export type OrderStatus =
   | 'refunded'
   | 'completed';
 
-export type PaymentMethod = 'cash' | 'card' | 'check' | 'online';
+/** 'partial' = more than one method; the amounts are on the order. */
+export type PaymentMethod = 'cash' | 'card' | 'check' | 'online' | 'partial';
+
+/** How a partial payment was split. */
+export interface PaymentSplit {
+  cash: number;
+  card: number;
+  online: number;
+}
 
 /**
  * Restaurant lifecycle, deliberately a separate union from OrderStatus.
@@ -98,6 +106,8 @@ export interface RestaurantOrderItem {
   isParcel?: boolean;
   /** Which round this line belongs to. Null while still a draft. */
   sentAt?: string | null;
+  /** Served from the counter (a drink) — never on a kitchen ticket. */
+  skipKitchen?: boolean;
 }
 
 export interface RestaurantOrder {
@@ -114,6 +124,8 @@ export interface RestaurantOrder {
   status: OrderStatus;
   tableId?: string | null;
   tableName?: string | null;
+  /** Who OPENED the order — the waiter on a seated order. */
+  createdById?: string;
   waiterName?: string | null;
   /** Who TOOK THE MONEY — a cashier, never the waiter. Null until paid. */
   settledByName?: string | null;
@@ -121,6 +133,17 @@ export interface RestaurantOrder {
   settledAt?: string | null;
   /** The cashier shift this payment landed in. */
   shiftId?: string | null;
+  /**
+   * The bill has been printed and is waiting to be paid. Printing CLAIMS the
+   * order for that cashier: other tills stop seeing it until it is paid, or
+   * until a waiter adds a round (which releases the claim).
+   */
+  billPrinted?: boolean;
+  billPrintedById?: string | null;
+  billPrintedByName?: string | null;
+  billPrintedAt?: string | null;
+  /** Who carries a delivery. Set when the bill is printed. */
+  riderName?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   deliveryAddress?: string | null;
@@ -131,6 +154,12 @@ export interface RestaurantOrder {
   discountValue?: Decimal | null;
   total: Decimal;
   paymentMethod?: PaymentMethod | null;
+  /** How much of `total` arrived by each method; the whole total on one for a single method. */
+  paidCash?: Decimal;
+  paidCard?: Decimal;
+  paidOnline?: Decimal;
+  /** The split, already as numbers, when `paymentMethod` is 'partial'. */
+  paymentSplit?: PaymentSplit | null;
   notes?: string | null;
   version: number;
   createdAt: string;
@@ -354,6 +383,12 @@ export interface Category {
    * predate the column — sort those last. See lib/sortOrder.ts.
    */
   sortOrder?: number | null;
+  /**
+   * Restaurant only: items are served from the counter and never sent to the
+   * kitchen. Categories named Drinks/Beverages skip it automatically — see
+   * lib/kitchen.ts.
+   */
+  skipKitchen?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -601,6 +636,8 @@ export interface CategoryPayload {
   image?: string | null;
   /** Omit on create to place it last; omit on update to keep its number. */
   sortOrder?: number;
+  /** Restaurant only: never send this category's items to the kitchen. */
+  skipKitchen?: boolean;
   /** The web app omits this, which is a bug — mobile always sends it. */
   storeId?: string;
 }

@@ -11,6 +11,7 @@ import { OrdersScreen } from '@/features/orders/screens/OrdersScreen';
 import { POSScreen } from '@/features/pos/screens/POSScreen';
 import { MoreScreen } from '@/features/settings/screens/MoreScreen';
 import { WaiterScreen } from '@/features/restaurant/screens/WaiterScreen';
+import { MyOrdersScreen } from '@/features/restaurant/screens/MyOrdersScreen';
 import { KitchenScreen } from '@/features/restaurant/screens/KitchenScreen';
 import { RestaurantCashierScreen } from '@/features/restaurant/screens/RestaurantCashierScreen';
 import { RestaurantDashboardScreen } from '@/features/restaurant/screens/RestaurantDashboardScreen';
@@ -24,9 +25,13 @@ const Tab = createBottomTabNavigator();
 
 interface TabSpec {
   name: string;
+  /** What the tab bar shows. Defaults to `name`. */
+  title?: string;
   permission: PermissionKey;
   component: ComponentType<any>;
   icon: ComponentType<{ color?: string; size?: number }>;
+  /** A staff-only tab: owners have a fuller screen elsewhere. */
+  staffOnly?: boolean;
 }
 
 /**
@@ -44,8 +49,14 @@ const RESTAURANT_TABS: TabSpec[] = [
    * called Dashboard, and two Tab.Screens sharing a name crash
    * react-navigation. Filtered to non-owners below.
    */
-  { name: 'MyShift', permission: 'cashier', component: CashierDashboardScreen, icon: Wallet },
+  { name: 'MyShift', permission: 'cashier', component: CashierDashboardScreen, icon: Wallet, staffOnly: true },
   { name: 'Tables', permission: 'tables', component: WaiterScreen, icon: UtensilsCrossed },
+  /**
+   * The waiter's OWN open orders, table by table, with a way to add to
+   * them. Staff only: an owner never opens orders, so theirs would be empty,
+   * and they have the full Orders history instead.
+   */
+  { name: 'MyOrders', title: 'My Orders', permission: 'tables', component: MyOrdersScreen, icon: ClipboardList, staffOnly: true },
   { name: 'Cashier', permission: 'cashier', component: RestaurantCashierScreen, icon: Receipt },
   { name: 'Kitchen', permission: 'kitchen', component: KitchenScreen, icon: ChefHat },
   { name: 'Orders', permission: 'orders', component: RestaurantOrdersScreen, icon: ClipboardList },
@@ -89,8 +100,9 @@ export function MainTabs() {
     // it out preserves the owner's existing four-tab bar; kitchen staff still
     // get it, because it is their base module.
     if (tab.permission === 'kitchen' && owner) return false;
-    // The owner has the full dashboard; the per-cashier one is for staff.
-    if (tab.name === 'MyShift' && owner) return false;
+    // The owner has the full dashboard and history; the per-person tabs
+    // (My Shift, My Orders) are for staff.
+    if (tab.staffOnly && owner) return false;
     return true;
   });
 
@@ -102,6 +114,7 @@ export function MainTabs() {
           name={tab.name}
           component={tab.component}
           options={{
+            title: tab.title ?? tab.name,
             tabBarIcon: ({ color, size }) => <tab.icon color={color} size={size} />,
           }}
         />

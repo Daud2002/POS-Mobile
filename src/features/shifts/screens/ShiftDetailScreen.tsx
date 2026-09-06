@@ -13,6 +13,7 @@ import { useAuth } from '@/app/providers/AuthProvider';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { isOwner } from '@/lib/access';
 import { orderDestination, orderLabel } from '@/lib/orderLabel';
+import { paymentSummary } from '@/lib/payment';
 import { toNumber } from '@/lib/format';
 import { useTheme } from '@/theme';
 
@@ -175,7 +176,9 @@ export function ShiftDetailScreen() {
                           minute: '2-digit',
                         })
                       : '—'}
-                    {order.paymentMethod ? ` · ${order.paymentMethod}` : ''}
+                    {/* A split payment lists each part, so the owner can see
+                        where every rupee of this shift came from. */}
+                    {paymentSummary(order, format) ? ` · ${paymentSummary(order, format)}` : ''}
                   </Text>
                 </View>
                 <Text variant="smallMedium">{format(toNumber(order.total))}</Text>

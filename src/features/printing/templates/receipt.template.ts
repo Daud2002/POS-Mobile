@@ -37,6 +37,8 @@ export interface ReceiptData {
   /** Printed for the rider on delivery orders. */
   customerPhone?: string | null;
   deliveryAddress?: string | null;
+  /** Who carries a delivery, so the paper says which rider took it. */
+  riderName?: string | null;
   items: Array<{
     name: string;
     quantity: number;
@@ -53,6 +55,8 @@ export interface ReceiptData {
   tax: number;
   total: number;
   paymentMethod?: string;
+  /** The parts of a split payment, each printed on its own line under "Paid by". */
+  paymentParts?: Array<{ label: string; amount: number }>;
   currency: string;
   /** Marks a reprint so duplicates are distinguishable from the original. */
   isReprint?: boolean;
@@ -343,6 +347,9 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
       builder.line(framed(width, line));
     }
   }
+  if (data.riderName) {
+    builder.line(framed(width, `Rider: ${data.riderName}`));
+  }
 
   // --- Items ----------------------------------------------------------------
   builder.line(boxRule(width, { below: cols }));
@@ -405,7 +412,14 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
 
   writeBig(builder, width, 'PAYABLE', money(data.total));
 
-  if (data.paymentMethod) {
+  if (data.paymentParts?.length) {
+    // Each part on its own line, so the paper says how the money arrived.
+    builder.line(boxRule(width));
+    builder.line(framed(width, 'Paid by:'));
+    for (const part of data.paymentParts) {
+      writeSplit(builder, width, `  ${part.label}`, money(part.amount));
+    }
+  } else if (data.paymentMethod) {
     builder.line(boxRule(width));
     builder.line(framed(width, `Paid by: ${data.paymentMethod.toUpperCase()}`));
   }

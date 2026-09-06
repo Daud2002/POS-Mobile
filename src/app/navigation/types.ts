@@ -35,6 +35,21 @@ export type RootStackParamList = {
   ChangePassword: undefined;
 };
 
+/**
+ * Restaurant tab bar. Only `Tables` takes a param: My Orders hands a live
+ * order across so the waiter lands on the menu already adding a round to it.
+ */
+export type RestaurantTabParamList = {
+  Dashboard: undefined;
+  MyShift: undefined;
+  Tables: { appendToOrderId?: string } | undefined;
+  MyOrders: undefined;
+  Cashier: undefined;
+  Kitchen: undefined;
+  Orders: undefined;
+  More: undefined;
+};
+
 /** Cashier (`employee`) — three destinations, exactly the web app's nav set. */
 export type CashierTabParamList = {
   POS: undefined;

@@ -2,6 +2,7 @@ import { AppUser, InvoiceData, Order, RestaurantOrder, Store } from '@/api/types
 import { paymentLabel } from '@/constants/statuses';
 import { toNumber } from '@/lib/format';
 import { orderDestination, orderTypeLabel } from '@/lib/orderLabel';
+import { paymentParts } from '@/lib/payment';
 
 import { ReceiptData } from './receipt.template';
 
@@ -188,6 +189,7 @@ export function receiptFromRestaurantOrder(params: {
     // The rider works from this paper on a delivery order.
     customerPhone: order.customerPhone,
     deliveryAddress: order.orderType === 'delivery' ? order.deliveryAddress : undefined,
+    riderName: order.orderType === 'delivery' ? order.riderName : undefined,
     // The waiter is who the customer dealt with, so that is the useful name.
     dispatchedBy: order.waiterName ?? 'Staff',
     items,
@@ -195,7 +197,18 @@ export function receiptFromRestaurantOrder(params: {
     totalDiscount: toNumber(order.discount),
     tax: 0,
     total: toNumber(order.total),
-    paymentMethod: order.paymentMethod ? paymentLabel(order.paymentMethod) : undefined,
+    // A bill printed BEFORE payment carries no "Paid by" line — nothing has
+    // been paid. `paymentMethod` defaults to cash on every row, so the
+    // payment STATUS is what decides.
+    paymentMethod:
+      order.paymentStatus === 'paid' && order.paymentMethod
+        ? paymentLabel(order.paymentMethod)
+        : undefined,
+    // A split payment prints each part under "Paid by".
+    paymentParts:
+      order.paymentStatus === 'paid' && order.paymentMethod === 'partial'
+        ? paymentParts(order).map((p) => ({ label: p.label, amount: p.amount }))
+        : undefined,
     currency,
     isReprint,
   };

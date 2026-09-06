@@ -131,7 +131,13 @@ function wrap(value: string, width: number): string[] {
   return lines.length ? lines : [''];
 }
 
-/** Adapts an API order into ticket data. */
+/**
+ * Adapts an API order into ticket data.
+ *
+ * Lines the kitchen does not cook — drinks, stamped `skipKitchen` by the
+ * server — are left off. A ticket with no lines left is not worth paper;
+ * callers check `items.length` before printing.
+ */
 export function kitchenTicketFromOrder(
   order: {
     orderNumber: string;
@@ -145,6 +151,7 @@ export function kitchenTicketFromOrder(
       quantity: number;
       notes?: string | null;
       isParcel?: boolean;
+      skipKitchen?: boolean;
     }>;
   },
   options: { variant?: KitchenTicketData['variant']; items?: typeof order.items } = {},
@@ -158,11 +165,13 @@ export function kitchenTicketFromOrder(
     orderType: order.orderType,
     date: order.createdAt ? new Date(order.createdAt) : new Date(),
     variant: options.variant ?? 'new',
-    items: (source ?? []).map((item) => ({
-      name: item.productName,
-      quantity: item.quantity,
-      notes: item.notes,
-      isParcel: item.isParcel,
-    })),
+    items: (source ?? [])
+      .filter((item) => !item.skipKitchen)
+      .map((item) => ({
+        name: item.productName,
+        quantity: item.quantity,
+        notes: item.notes,
+        isParcel: item.isParcel,
+      })),
   };
 }

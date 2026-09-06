@@ -1,4 +1,4 @@
-import { Banknote, CreditCard, Globe, Clock } from 'lucide-react-native';
+import { Banknote, CreditCard, Globe, Clock, Layers } from 'lucide-react-native';
 import { ComponentType } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -11,6 +11,8 @@ const METHOD_ICONS: Record<PaymentMethod, ComponentType<{ size?: number; color?:
   card: CreditCard,
   online: Globe,
   check: Banknote,
+  // Restaurant-only: a payment split across methods. Never offered here.
+  partial: Layers,
 };
 
 const METHODS: Array<{ value: PaymentMethod; label: string }> = [

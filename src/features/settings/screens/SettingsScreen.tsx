@@ -55,6 +55,7 @@ export function SettingsScreen() {
   const canPrint = effectiveRoleOf(user) !== 'waiter';
 
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [logoBroken, setLogoBroken] = useState(false);
 
   const ThemeIcon = THEME_ICONS[mode];
 
@@ -101,11 +102,13 @@ export function SettingsScreen() {
               { borderTopColor: theme.colors.border, marginTop: theme.spacing.lg },
             ]}
           >
-            {user.logoUrl ? (
+            {user.logoUrl && !logoBroken ? (
               <Image
                 source={{ uri: assetUrl(user.logoUrl) }}
                 style={styles.logo}
                 resizeMode="contain"
+                // A logo whose file is gone shows the plain tile, not a blank.
+                onError={() => setLogoBroken(true)}
               />
             ) : (
               <View style={[styles.logo, { backgroundColor: theme.colors.muted }]} />

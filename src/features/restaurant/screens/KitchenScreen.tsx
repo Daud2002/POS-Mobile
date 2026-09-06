@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Vibration } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Printer, ChefHat } from 'lucide-react-native';
+import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
+import { Printer, ChefHat, BellRing } from 'lucide-react-native';
 
 import { restaurantApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
@@ -11,11 +12,34 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { getSocket, RealtimeEvents } from '@/lib/socket';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { kitchenTicketFromOrder } from '@/features/printing/templates/kitchenTicket.template';
+import { kitchenLines } from '@/lib/kitchen';
 import { orderDestination, orderLabel, orderStatusLabel } from '@/lib/orderLabel';
 import { tint, useTheme } from '@/theme';
 import type { RestaurantOrder } from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 
+/** Three seconds of bell — six chimes — bundled so it plays offline. */
+const RING = require('../../../../assets/sounds/new-order.wav');
+
+/**
+ * Buzz alongside the bell for the same three seconds: a kitchen is loud, and
+ * a tablet lying on a steel counter is felt before it is heard.
+ */
+const RING_VIBRATION = [0, 400, 100, 400, 100, 400, 100, 400, 100, 400, 100, 400];
+
+/**
+ * The kitchen board.
+ *
+ * Shows and prints only what the kitchen COOKS. Drinks are billed on the
+ * order like anything else but are poured at the counter, so the server
+ * stamps them `skipKitchen` and this screen leaves them out of every card and
+ * every ticket. An order or a round made of drinks alone never appears here
+ * at all — the server never puts it on the board, and the events it raises
+ * carry no kitchen lines, which is the signal to stay silent.
+ *
+ * Every new ticket rings the bell for three seconds, through the silent
+ * switch: a kitchen device on mute is a kitchen that misses orders.
+ */
 export function KitchenScreen() {
   const theme = useTheme();
   const toast = useToast();
@@ -24,6 +48,25 @@ export function KitchenScreen() {
 
   /** Orders auto-printed this session, so a refetch never reprints one. */
   const printed = useRef(new Set<string>());
+
+  const bell = useAudioPlayer(RING);
+
+  useEffect(() => {
+    // Ring even when the phone's ringer switch is off.
+    setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+  }, []);
+
+  const ring = useCallback(() => {
+    try {
+      bell.volume = 1;
+      void bell.seekTo(0);
+      bell.play();
+    } catch {
+      // No audio hardware, or the module is missing from an older build:
+      // the vibration and the toast still announce the ticket.
+    }
+    Vibration.vibrate(RING_VIBRATION);
+  }, [bell]);
 
   const ordersQuery = useQuery({
     queryKey: queryKeys.restaurantOrders('live'),
@@ -50,9 +93,10 @@ export function KitchenScreen() {
       items?: RestaurantOrder['items'],
     ) => {
       if (!hasPrinter) return;
-      const result = await printKitchenTicket(
-        kitchenTicketFromOrder(order as any, { variant, items: items as any }),
-      );
+      const ticket = kitchenTicketFromOrder(order as any, { variant, items: items as any });
+      // Nothing to cook, nothing to print — a drinks-only order or round.
+      if (!ticket.items.length) return;
+      const result = await printKitchenTicket(ticket);
       // Printing never blocks the queue — the order is already on screen.
       if (!result.ok) toast.error(result.error ?? 'Ticket printing failed');
     },
@@ -63,7 +107,10 @@ export function KitchenScreen() {
     const socket = getSocket();
 
     const onCreated = (order: RestaurantOrder) => {
+      // Drinks only: the server opened it ready to bill, and it is not ours.
+      if (!kitchenLines(order?.items).length) return;
       toast.info(`${order.waiterName ?? 'A waiter'} sent an order for ${orderDestination(order)}`);
+      ring();
       if (!printed.current.has(order.id)) {
         printed.current.add(order.id);
         void print(order, 'new');
@@ -71,8 +118,9 @@ export function KitchenScreen() {
     };
 
     const onItemsAdded = (payload: { order: RestaurantOrder; newItems: RestaurantOrder['items'] }) => {
-      if (!payload?.order) return;
+      if (!payload?.order || !kitchenLines(payload.newItems).length) return;
       toast.info(`${payload.order.waiterName ?? 'A waiter'} added a round for ${payload.order.tableName ?? 'an order'}`);
+      ring();
       // Only the new lines — reprinting everything would double-cook round one.
       void print(payload.order, 'additional', payload.newItems);
     };
@@ -83,7 +131,7 @@ export function KitchenScreen() {
       socket.off(RealtimeEvents.orderCreated, onCreated);
       socket.off(RealtimeEvents.orderItemsAdded, onItemsAdded);
     };
-  }, [print, toast]);
+  }, [print, ring, toast]);
 
   /**
    * The kitchen's two moves. `handed_over` is where its authority ends: the
@@ -112,7 +160,16 @@ export function KitchenScreen() {
       <View style={{ gap: 12 }}>
         <ConnectionBanner connected={connected} />
 
-        <Text variant="h2">Kitchen · {orders.length} open</Text>
+        <View style={styles.headerRow}>
+          <Text variant="h2">Kitchen · {orders.length} open</Text>
+          <Button
+            size="sm"
+            variant="outline"
+            onPress={ring}
+            icon={<BellRing size={16} color={theme.colors.foreground} />}
+            label="Test bell"
+          />
+        </View>
 
         {orders.length === 0 && !ordersQuery.isLoading ? (
           <EmptyState
@@ -145,6 +202,13 @@ export function KitchenScreen() {
                     {orderLabel(order)} · {order.waiterName ?? 'Unknown'} ·{' '}
                     {new Date(order.createdAt).toLocaleTimeString()}
                   </Text>
+                  {/* A dine-out order eats in AND takes a parcel, so the
+                      kitchen has to box part of it. */}
+                  {order.orderType === 'dine_out' ? (
+                    <Text variant="caption" style={{ color: theme.colors.info }}>
+                      Dine-out — pack the parcel items
+                    </Text>
+                  ) : null}
                 </View>
                 <Text
                   variant="caption"
@@ -160,7 +224,7 @@ export function KitchenScreen() {
               </View>
 
               <View style={{ gap: 4 }}>
-                {(order.items ?? []).map((item) => (
+                {kitchenLines(order.items).map((item) => (
                   <View key={item.id}>
                     <Text variant="body">
                       <Text variant="bodySemibold">{item.quantity} × </Text>
@@ -219,6 +283,7 @@ export function KitchenScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   card: { borderWidth: 1, padding: 14, gap: 10 },
   cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   actions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
