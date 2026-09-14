@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet, Pressable } from 'react-native';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardList, ChevronDown } from 'lucide-react-native';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ClipboardList, ChevronDown, Printer } from 'lucide-react-native';
 
 import { restaurantApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
+import type { OrderEvent } from '@/api/types';
 import { Screen } from '@/components/layout';
 import { Button, EmptyState, SearchInput, Text } from '@/components/ui';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
@@ -18,6 +19,83 @@ import {
 import { paymentSummary } from '@/lib/payment';
 import { tint, useTheme } from '@/theme';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+
+const timeOf = (value: string) =>
+  new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * An order's history, oldest first: the original order, then every change
+ * and every print with who did it. Fetched only once the card is open — the
+ * list is paged and most orders are never expanded.
+ */
+function OrderHistory({ orderId, format }: { orderId: string; format: (n: number) => string }) {
+  const theme = useTheme();
+  const history = useQuery({
+    queryKey: queryKeys.restaurantOrderHistory(orderId),
+    queryFn: () => restaurantApi.history(orderId),
+  });
+  const events = history.data?.events ?? [];
+
+  const toneOf = (event: OrderEvent) =>
+    event.type === 'items_added'
+      ? theme.colors.success
+      : event.type === 'items_removed'
+        ? theme.colors.destructive
+        : theme.colors.foreground;
+  const headingOf = (event: OrderEvent) =>
+    event.type === 'placed' ? 'Original order' : event.type === 'items_added' ? 'Added' : 'Removed';
+
+  return (
+    <View style={[styles.history, { borderColor: theme.colors.border, borderRadius: theme.radius.md }]}>
+      <Text variant="caption" color="mutedForeground" style={{ textTransform: 'uppercase' }}>
+        History
+      </Text>
+      {history.isLoading ? (
+        <Text variant="caption" color="mutedForeground">Loading…</Text>
+      ) : history.isError ? (
+        <Text variant="caption" style={{ color: theme.colors.destructive }}>
+          Could not load the history.
+        </Text>
+      ) : events.length === 0 ? (
+        <Text variant="caption" color="mutedForeground">
+          No history recorded — this order predates change tracking.
+        </Text>
+      ) : (
+        events.map((event) =>
+          event.type === 'bill_printed' ? (
+            <View key={event.id} style={styles.historyPrint}>
+              <Printer size={12} color={theme.colors.mutedForeground} />
+              <Text variant="caption" color="mutedForeground" style={{ flex: 1 }}>
+                {event.payload?.reprint
+                  ? `Bill reprinted (#${event.payload.printNumber ?? '?'})`
+                  : 'Bill printed'}
+                {' · '}{event.actorName ?? 'Unknown'} · {timeOf(event.createdAt)}
+                {' · '}{format(toNumber(event.payload?.totals?.total))}
+              </Text>
+            </View>
+          ) : (
+            <View key={event.id}>
+              <Text variant="caption" style={{ color: toneOf(event), fontWeight: '600' }}>
+                {headingOf(event)}
+                <Text variant="caption" color="mutedForeground">
+                  {' · '}{event.actorName ?? 'Unknown'} · {timeOf(event.createdAt)}
+                </Text>
+              </Text>
+              {(event.payload?.lines ?? []).map((line, i) => (
+                <Text key={`${event.id}-${i}`} variant="caption" color="mutedForeground" style={{ paddingLeft: 12 }}>
+                  {event.type === 'items_removed' ? '−' : event.type === 'items_added' ? '+' : ''}
+                  {line.quantity} × {line.productName ?? 'Item'}
+                  {line.isParcel ? ' (parcel)' : ''}
+                  {line.notes ? ` — ${line.notes}` : ''}
+                </Text>
+              ))}
+            </View>
+          ),
+        )
+      )}
+    </View>
+  );
+}
 
 /** Full history, unlike the Cashier screen which only lists what is still open. */
 const FILTERS: ReadonlyArray<{
@@ -83,8 +161,10 @@ export function RestaurantOrdersScreen() {
       RealtimeEvents.orderCreated,
       RealtimeEvents.orderUpdated,
       RealtimeEvents.orderItemsAdded,
+      RealtimeEvents.orderItemsRemoved,
       RealtimeEvents.draftUpdated,
     ],
+    // Invalidates the whole 'restaurant' prefix, histories included.
     onChange: refresh,
   });
 
@@ -192,8 +272,13 @@ export function RestaurantOrdersScreen() {
                       {!order.settledByName && order.billPrinted && order.billPrintedByName
                         ? ` · bill by ${order.billPrintedByName}`
                         : ''}
-                      {order.riderName ? ` · rider ${order.riderName}` : ''}
                     </Text>
+                    {/* A bill that came out more than once is worth a second look. */}
+                    {toNumber(order.reprintCount) > 0 ? (
+                      <Text variant="caption" style={{ color: theme.colors.warning }}>
+                        Reprinted ×{toNumber(order.reprintCount)}
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end', gap: 2 }}>
                     <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>
@@ -250,6 +335,12 @@ export function RestaurantOrdersScreen() {
                         </Text>
                       </View>
                     )}
+                    {toNumber(order.deliveryCharge) > 0 && (
+                      <View style={styles.itemRow}>
+                        <Text variant="caption" color="mutedForeground">Delivery charges</Text>
+                        <Text variant="caption">{format(toNumber(order.deliveryCharge))}</Text>
+                      </View>
+                    )}
                     <View style={styles.itemRow}>
                       <Text variant="bodySemibold">Total</Text>
                       <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>
@@ -260,6 +351,8 @@ export function RestaurantOrdersScreen() {
                         ? ` · ${paymentSummary(order, format)}`
                         : ''}
                     </Text>
+
+                    <OrderHistory orderId={order.id} format={format} />
                   </View>
                 )}
               </Pressable>
@@ -287,4 +380,6 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: 6 },
+  history: { borderWidth: StyleSheet.hairlineWidth, padding: 10, gap: 6, marginTop: 8 },
+  historyPrint: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 });

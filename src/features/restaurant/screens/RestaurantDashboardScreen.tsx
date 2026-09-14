@@ -13,8 +13,9 @@ import { Text } from '@/components/ui';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
-import { can } from '@/lib/access';
+import { can, canSeeShifts } from '@/lib/access';
 import { localDateKey } from '@/lib/date';
+import { ProfitSection } from '@/features/dashboard/components/ProfitSection';
 import { tint, useTheme } from '@/theme';
 
 const RANGES = [
@@ -64,7 +65,11 @@ export function RestaurantDashboardScreen() {
 
   const refresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['restaurant'] });
+    queryClient.invalidateQueries({ queryKey: ['reports'] });
   }, [queryClient]);
+
+  // Drawers are the `shifts` module: owners always, a supervisor when granted.
+  const showShifts = canSeeShifts(user);
 
   // Revenue lands as the cashier settles.
   useRealtime({ events: [RealtimeEvents.orderUpdated], onChange: refresh });
@@ -156,6 +161,8 @@ export function RestaurantDashboardScreen() {
           </View>
         )}
 
+        <ProfitSection showExpenses={canSeeExpenses} />
+
         <SectionCard title="Top dishes">
           {report?.topProducts?.length ? (
             report.topProducts.map((p) => (
@@ -178,11 +185,13 @@ export function RestaurantDashboardScreen() {
         <SectionCard
           title="By cashier"
           action={
-            <Pressable onPress={() => navigation.navigate('Cashiers')}>
-              <Text variant="caption" style={{ color: theme.colors.primary }}>
-                Shifts
-              </Text>
-            </Pressable>
+            showShifts ? (
+              <Pressable onPress={() => navigation.navigate('Cashiers')}>
+                <Text variant="caption" style={{ color: theme.colors.primary }}>
+                  Shifts
+                </Text>
+              </Pressable>
+            ) : null
           }
         >
           {report?.byCashier?.length ? (

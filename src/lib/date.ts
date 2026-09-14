@@ -59,3 +59,15 @@ export function displayDate(date: Date | string): string {
     year: 'numeric',
   });
 }
+
+/**
+ * The device's IANA zone, so a server-computed "today" is the user's day.
+ * Hermes ships Intl; the fallback is for a build where it is trimmed out.
+ */
+export function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}

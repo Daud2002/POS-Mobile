@@ -1,4 +1,11 @@
-import { basePermissionFor, can, isOwner, permissionsOf } from '../access';
+import {
+  basePermissionFor,
+  can,
+  canManageExpenseCategories,
+  canSeeShifts,
+  isOwner,
+  permissionsOf,
+} from '../access';
 import type { AppUser } from '@/api/types';
 
 const user = (over: Partial<AppUser>): AppUser =>
@@ -25,6 +32,13 @@ describe('permissionsOf', () => {
       expect(
         permissionsOf(user({ role: 'store_owner', effectiveRole: 'restaurant_owner' })),
       ).toContain('tables');
+      // A restaurant fills its own customer book from delivery orders, and the
+      // owner reviews every drawer.
+      const restaurantOwner = permissionsOf(
+        user({ role: 'store_owner', effectiveRole: 'restaurant_owner' }),
+      );
+      expect(restaurantOwner).toContain('customers');
+      expect(restaurantOwner).toContain('shifts');
     });
 
     it('gives staff their base module only', () => {
@@ -50,6 +64,7 @@ describe('basePermissionFor', () => {
     expect(basePermissionFor('restaurant', 'cashier')).toBe('cashier');
     expect(basePermissionFor('restaurant', 'kitchen')).toBe('kitchen');
     expect(basePermissionFor('restaurant', 'waiter')).toBe('tables');
+    expect(basePermissionFor('restaurant', 'supervisor')).toBe('cashier');
     expect(basePermissionFor('general', 'anything')).toBe('pos');
   });
 
@@ -68,6 +83,7 @@ describe('basePermissionFor', () => {
       ['restaurant', 'cashier', 'cashier'],
       ['restaurant', 'kitchen', 'kitchen'],
       ['restaurant', 'waiter', 'tables'],
+      ['restaurant', 'supervisor', 'cashier'],
       ['restaurant', 'Bartender', 'cashier'],
       ['general', 'Sales Rep', 'pos'],
     ] as const) {
@@ -82,6 +98,41 @@ describe('isOwner', () => {
     expect(isOwner(user({ effectiveRole: 'store_owner' }))).toBe(true);
     expect(isOwner(user({ effectiveRole: 'cashier' }))).toBe(false);
     expect(isOwner(user({ effectiveRole: 'waiter' }))).toBe(false);
+    // The owner's stand-in is still staff: no Staff screen, own drawer.
+    expect(isOwner(user({ effectiveRole: 'supervisor' }))).toBe(false);
+  });
+});
+
+describe('supervisor gates', () => {
+  it('lets a supervisor reshape the ledger only while they hold expenses', () => {
+    expect(
+      canManageExpenseCategories(
+        user({ accountType: 'restaurant', effectiveRole: 'supervisor', permissions: ['cashier', 'expenses'] }),
+      ),
+    ).toBe(true);
+    expect(
+      canManageExpenseCategories(
+        user({ accountType: 'restaurant', effectiveRole: 'supervisor', permissions: ['cashier'] }),
+      ),
+    ).toBe(false);
+    expect(
+      canManageExpenseCategories(
+        user({ accountType: 'restaurant', effectiveRole: 'cashier', permissions: ['cashier', 'expenses'] }),
+      ),
+    ).toBe(false);
+    expect(canManageExpenseCategories(user({ effectiveRole: 'restaurant_owner' }))).toBe(true);
+  });
+
+  it('opens the drawers to owners and to a supervisor granted shifts', () => {
+    expect(canSeeShifts(user({ effectiveRole: 'restaurant_owner' }))).toBe(true);
+    expect(
+      canSeeShifts(
+        user({ accountType: 'restaurant', effectiveRole: 'supervisor', permissions: ['cashier', 'shifts'] }),
+      ),
+    ).toBe(true);
+    expect(
+      canSeeShifts(user({ accountType: 'restaurant', effectiveRole: 'supervisor', permissions: ['cashier'] })),
+    ).toBe(false);
   });
 });
 

@@ -8,6 +8,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { customersApi, ordersApi } from '@/api/services';
 import { Order, PaymentMethod } from '@/api/types';
 import { RootStackScreenProps } from '@/app/navigation/types';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { KeyValueRow } from '@/components/data/KeyValueRow';
 import { Screen } from '@/components/layout/Screen';
 import { Card } from '@/components/ui/Card';
@@ -32,6 +33,8 @@ export function CustomerOrdersScreen({ route }: RootStackScreenProps<'CustomerOr
   const queryClient = useQueryClient();
   const { format } = useStoreCurrency();
   const { reprint, reprintingId } = useReprint();
+  const { user } = useAuth();
+  const isRestaurant = user?.accountType === 'restaurant';
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [payingOrder, setPayingOrder] = useState<Order | null>(null);
@@ -74,7 +77,9 @@ export function CustomerOrdersScreen({ route }: RootStackScreenProps<'CustomerOr
         <Text variant="h2">{customer?.name ?? 'Customer'}</Text>
         {customer?.phone ? (
           <Text variant="caption" color="mutedForeground">
-            {[customer.phone, customer.city].filter(Boolean).join(' · ')}
+            {[customer.phone, isRestaurant ? customer.address : customer.city]
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
         ) : null}
 

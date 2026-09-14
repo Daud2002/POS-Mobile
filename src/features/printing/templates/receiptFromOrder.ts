@@ -107,6 +107,7 @@ export function receiptFromInvoice(params: {
     items,
     rawSubtotal,
     totalDiscount: order.discount,
+    deliveryCharge: order.deliveryCharge ?? 0,
     tax: order.tax,
     total: order.total,
     paymentMethod: order.paymentMethod ? paymentLabel(order.paymentMethod) : undefined,
@@ -189,12 +190,13 @@ export function receiptFromRestaurantOrder(params: {
     // The rider works from this paper on a delivery order.
     customerPhone: order.customerPhone,
     deliveryAddress: order.orderType === 'delivery' ? order.deliveryAddress : undefined,
-    riderName: order.orderType === 'delivery' ? order.riderName : undefined,
     // The waiter is who the customer dealt with, so that is the useful name.
     dispatchedBy: order.waiterName ?? 'Staff',
     items,
     rawSubtotal,
     totalDiscount: toNumber(order.discount),
+    // The server stores 0 on anything but a delivery; the guard is belt and braces.
+    deliveryCharge: order.orderType === 'delivery' ? toNumber(order.deliveryCharge) : 0,
     tax: 0,
     total: toNumber(order.total),
     // A bill printed BEFORE payment carries no "Paid by" line — nothing has

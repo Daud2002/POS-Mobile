@@ -11,6 +11,7 @@ import { PasswordField } from '@/components/ui/PasswordField';
 import { Sheet } from '@/components/ui/Sheet';
 import { Switch } from '@/components/ui/Switch';
 import { Text } from '@/components/ui/Text';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { toNumber } from '@/lib/format';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -66,7 +67,11 @@ export function EmployeeFormSheet({
   onSubmit,
 }: EmployeeFormSheetProps) {
   const theme = useTheme();
+  const { user } = useAuth();
   const isCreating = !employee;
+  // The server only accepts these four on a restaurant; say so up front.
+  const designationHint =
+    user?.accountType === 'restaurant' ? 'waiter, kitchen, cashier or supervisor' : undefined;
 
   const {
     control,
@@ -222,7 +227,9 @@ export function EmployeeFormSheet({
               value={value}
               onChangeText={onChange}
               onBlur={onBlur}
-              placeholder="e.g. Cashier"
+              placeholder={designationHint ? 'e.g. supervisor' : 'e.g. Cashier'}
+              hint={designationHint}
+              autoCapitalize="none"
               error={errors.designation?.message}
             />
           )}

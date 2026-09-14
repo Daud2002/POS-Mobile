@@ -32,12 +32,14 @@ export interface KitchenTicketData {
    * Set for a second or later round so the kitchen can tell an addition from
    * a new order, and for a reprint so a duplicate is not cooked twice.
    */
-  variant?: 'new' | 'additional' | 'reprint';
+  variant?: 'new' | 'additional' | 'reprint' | 'cancelled';
 }
 
 function heading(variant: KitchenTicketData['variant']): string {
   if (variant === 'additional') return 'ADDITIONAL ROUND';
   if (variant === 'reprint') return 'REPRINT';
+  // The cashier struck these lines off while they were still being cooked.
+  if (variant === 'cancelled') return 'CANCELLED ITEMS';
   return 'KITCHEN ORDER';
 }
 

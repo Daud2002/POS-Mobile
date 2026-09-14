@@ -19,6 +19,14 @@ export const queryKeys = {
   customers: () => ['customers'] as const,
   customer: (id: string) => ['customer', id] as const,
   customerOrders: (customerId: string) => ['customer', customerId, 'orders'] as const,
+  customerSuggest: (q: string) => ['customers', 'suggest', q] as const,
+
+  /**
+   * Profit, keyed under 'reports' rather than 'restaurant' so both dashboards
+   * share one cache entry; the restaurant screen invalidates it explicitly
+   * when an order settles.
+   */
+  profitReport: (tz: string) => ['reports', 'profit', tz] as const,
 
   employees: (storeId: string) => ['employees', storeId] as const,
   employeePermissions: (id: string) => ['employee', id, 'permissions'] as const,
@@ -35,6 +43,7 @@ export const queryKeys = {
   restaurantTables: () => ['restaurant', 'tables'] as const,
   restaurantOrders: (filter?: string) => ['restaurant', 'orders', filter ?? 'all'] as const,
   restaurantOrder: (id: string) => ['restaurant', 'order', id] as const,
+  restaurantOrderHistory: (id: string) => ['restaurant', 'order', id, 'history'] as const,
   restaurantReport: (range: string) => ['restaurant', 'report', range] as const,
 
   /**

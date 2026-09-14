@@ -18,7 +18,9 @@ export type EffectiveRole =
   | 'restaurant_owner'
   | 'waiter'
   | 'kitchen'
-  | 'cashier';
+  | 'cashier'
+  /** A cashier the owner can hand any of their own modules to, bar Staff. */
+  | 'supervisor';
 
 /**
  * A module a user may be granted, mirroring Backend/src/common/permissions.ts.
@@ -37,7 +39,9 @@ export type PermissionKey =
   | 'categories'
   | 'orders'
   | 'customers'
-  | 'inventory';
+  | 'inventory'
+  /** Every cashier's drawer and handover. Restaurant only. */
+  | 'shifts';
 
 export type OrderStatus =
   | 'pending'
@@ -142,8 +146,10 @@ export interface RestaurantOrder {
   billPrintedById?: string | null;
   billPrintedByName?: string | null;
   billPrintedAt?: string | null;
-  /** Who carries a delivery. Set when the bill is printed. */
-  riderName?: string | null;
+  /** How many times the bill has been printed; the first print counts as 1. */
+  billPrintCount?: number;
+  /** Prints after the first — what the owner's list flags. */
+  reprintCount?: number;
   customerName?: string | null;
   customerPhone?: string | null;
   deliveryAddress?: string | null;
@@ -152,6 +158,8 @@ export interface RestaurantOrder {
   discount: Decimal;
   discountType?: 'amount' | 'percent' | null;
   discountValue?: Decimal | null;
+  /** Added on top of the discounted food. Always 0 unless orderType is delivery. */
+  deliveryCharge?: Decimal;
   total: Decimal;
   paymentMethod?: PaymentMethod | null;
   /** How much of `total` arrived by each method; the whole total on one for a single method. */
@@ -181,6 +189,65 @@ export interface CreateRestaurantOrderPayload {
   customerPhone?: string;
   deliveryAddress?: string;
   notes?: string;
+  /** Entered by the cashier as the order is punched. */
+  discountType?: 'amount' | 'percent';
+  discountValue?: number;
+  /** Delivery only; stored as 0 on anything else. */
+  deliveryCharge?: number;
+  /**
+   * Record the bill as printed (and claim the order) as it is created — the
+   * till prints from the response. Cashier/owner only; ignored on drafts.
+   */
+  printBill?: boolean;
+}
+
+/** One line to strike off a live order. Omit `quantity` to remove the whole line. */
+export interface RemoveOrderItemPayload {
+  orderItemId: string;
+  quantity?: number;
+}
+
+/**
+ * One row of an order's history, oldest first: the original lines, every
+ * round added or struck off with who did it, and every print of the bill.
+ */
+export interface OrderEvent {
+  id: string;
+  type: 'placed' | 'items_added' | 'items_removed' | 'bill_printed';
+  actorId: string | null;
+  actorName: string | null;
+  actorRole: string | null;
+  createdAt: string;
+  payload: {
+    lines: Array<{
+      orderItemId?: string | null;
+      productId: string | null;
+      productName: string | null;
+      /** For items_removed this is how many came OFF, not what the line kept. */
+      quantity: number;
+      unitPrice: number;
+      total: number;
+      isParcel: boolean;
+      notes: string | null;
+      skipKitchen: boolean;
+    }>;
+    totals: {
+      subtotal: number;
+      discount: number;
+      discountType: 'amount' | 'percent' | null;
+      discountValue: number | null;
+      deliveryCharge: number;
+      total: number;
+    };
+    reprint?: boolean;
+    printNumber?: number;
+    orderStatusAfter?: string;
+  };
+}
+
+export interface OrderHistory {
+  orderId: string;
+  events: OrderEvent[];
 }
 
 /** Envelope returned when an endpoint is called with `withCount=true`. */
@@ -205,6 +272,34 @@ export interface RestaurantSalesReport {
   /** Who COLLECTED the money, as opposed to who took the order. */
   byCashier: { name: string; orders: number; revenue: number }[];
   byOrderType: { orderType: string; orders: number; revenue: number }[];
+}
+
+/** The six windows GET /reports/profit reports on. */
+export type ProfitPeriodKey =
+  | 'today'
+  | 'thisMonth'
+  | 'last3Months'
+  | 'last6Months'
+  | 'thisYear'
+  | 'allTime';
+
+export interface ProfitPeriod {
+  orderCount: number;
+  /** What the goods sold for — delivery charges excluded. */
+  revenue: number;
+  /** Σ unitCost × quantity, from the cost snapshot on each line sold. */
+  cost: number;
+  grossProfit: number;
+  /** Lines sold with no cost recorded, so `cost` is understated by them. */
+  unknownCostLineCount: number;
+  /** Null when the viewer does not hold the expenses module. */
+  expenses: number | null;
+  netProfit: number | null;
+}
+
+export interface ProfitReport {
+  tz: string;
+  periods: Record<ProfitPeriodKey, ProfitPeriod>;
 }
 
 /** A money value as it arrives from the API — always run through `toNumber()`. */
@@ -417,6 +512,8 @@ export interface Product {
 
 export interface Customer {
   id: string;
+  /** The tenant. Absent on rows the server has not scoped yet. */
+  storeId?: string | null;
   name: string;
   email?: string;
   phone: string;
@@ -426,6 +523,15 @@ export interface Customer {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A row of GET /customers/suggest — what the order screen needs to fill itself. */
+export interface CustomerSuggestion {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  city: string | null;
 }
 
 export interface OrderItem {
@@ -563,6 +669,8 @@ export interface InvoiceData {
     subtotal: number;
     tax: number;
     discount: number;
+    /** Restaurant deliveries only; 0 or absent otherwise. */
+    deliveryCharge?: number;
     total: number;
     paymentMethod?: PaymentMethod;
     items: Array<{

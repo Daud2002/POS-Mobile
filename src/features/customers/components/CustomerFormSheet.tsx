@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import { z } from 'zod';
 
 import { Customer, CustomerPayload } from '@/api/types';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Sheet } from '@/components/ui/Sheet';
@@ -63,13 +64,24 @@ export function CustomerFormSheet({
     });
   }, [open, customer, reset]);
 
+  /**
+   * A restaurant's book is a delivery book: name, phone, address. Email and
+   * city are general-store fields — not asked for, not sent.
+   */
+  const { user } = useAuth();
+  const isRestaurant = user?.accountType === 'restaurant';
+
   const submit = (values: CustomerForm) =>
     onSubmit({
       name: values.name.trim(),
       phone: values.phone.trim(),
       address: values.address.trim(),
-      email: values.email?.trim() || undefined,
-      city: values.city?.trim() || undefined,
+      ...(isRestaurant
+        ? {}
+        : {
+            email: values.email?.trim() || undefined,
+            city: values.city?.trim() || undefined,
+          }),
     });
 
   return (
@@ -143,40 +155,42 @@ export function CustomerFormSheet({
         )}
       />
 
-      <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-        <Controller
-          control={control}
-          name="email"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <Input
-              containerStyle={{ flex: 1 }}
-              label="Email"
-              value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              placeholder="Optional"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              error={errors.email?.message}
-            />
-          )}
-        />
+      {!isRestaurant && (
+        <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+          <Controller
+            control={control}
+            name="email"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <Input
+                containerStyle={{ flex: 1 }}
+                label="Email"
+                value={value}
+                onChangeText={onChange}
+                onBlur={onBlur}
+                placeholder="Optional"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                error={errors.email?.message}
+              />
+            )}
+          />
 
-        <Controller
-          control={control}
-          name="city"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <Input
-              containerStyle={{ flex: 1 }}
-              label="City"
-              value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              placeholder="Optional"
-            />
-          )}
-        />
-      </View>
+          <Controller
+            control={control}
+            name="city"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <Input
+                containerStyle={{ flex: 1 }}
+                label="City"
+                value={value}
+                onChangeText={onChange}
+                onBlur={onBlur}
+                placeholder="Optional"
+              />
+            )}
+          />
+        </View>
+      )}
     </Sheet>
   );
 }

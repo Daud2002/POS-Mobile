@@ -11,7 +11,7 @@ import { SectionCard, KeyValueRow } from '@/components/data';
 import { Button, Input, Sheet, Text, EmptyState, useToast } from '@/components/ui';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
-import { isOwner } from '@/lib/access';
+import { canSeeShifts } from '@/lib/access';
 import { orderDestination, orderLabel } from '@/lib/orderLabel';
 import { paymentSummary } from '@/lib/payment';
 import { toNumber } from '@/lib/format';
@@ -33,7 +33,7 @@ export function ShiftDetailScreen() {
   const queryClient = useQueryClient();
 
   const shiftId: string = route.params?.shiftId;
-  const owner = isOwner(user);
+  const owner = canSeeShifts(user);
 
   const [collectOpen, setCollectOpen] = useState(false);
   const [amountText, setAmountText] = useState('');

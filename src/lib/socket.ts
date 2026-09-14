@@ -8,6 +8,8 @@ const SOCKET_URL = API_BASE_URL.replace(/\/api\/?$/, '');
 export const RealtimeEvents = {
   orderCreated: 'order:created',
   orderItemsAdded: 'order:items_added',
+  /** Lines struck off while the kitchen was still cooking them: `{ order, removedItems }`. */
+  orderItemsRemoved: 'order:items_removed',
   orderUpdated: 'order:updated',
   tableUpdated: 'table:updated',
   draftUpdated: 'draft:updated',

@@ -6,6 +6,8 @@ import type {
   RestaurantSalesReport,
   CreateRestaurantOrderPayload,
   RestaurantOrderItemPayload,
+  RemoveOrderItemPayload,
+  OrderHistory,
 } from '../types';
 
 /**
@@ -92,6 +94,20 @@ export const restaurantApi = {
   },
 
   /**
+   * Strikes lines (or part of a line) off a live order. Cashier or owner
+   * only, and only on a bill this till holds. The kitchen gets a cancellation
+   * ticket for anything it had not yet handed over; the bill wants reprinting.
+   */
+  removeItems(id: string, items: RemoveOrderItemPayload[]) {
+    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items/remove`, { items });
+  },
+
+  /** The order's audit trail: original lines, every change, every print. */
+  history(id: string) {
+    return apiClient.get<OrderHistory>(`/restaurant/orders/${id}/history`);
+  },
+
+  /**
    * The kitchen's two moves. 'completed' is deliberately not offered: it means
    * paid and table freed, which only settling may do.
    */
@@ -100,13 +116,18 @@ export const restaurantApi = {
   },
 
   /**
-   * Step one of taking payment. Fixes the discount, records the rider on a
-   * delivery, and claims the order for this cashier. Calling it again is a
-   * reprint — and the only way to change the discount.
+   * Prints (or reprints) the bill: fixes the discount and delivery charge and
+   * claims the order for this cashier. Every money field is "absent = keep
+   * what is stored, null = clear it", so a bare reprint never wipes a
+   * discount the order was punched with.
    */
   printBill(
     id: string,
-    body: { discountType?: 'amount' | 'percent'; discountValue?: number; riderName?: string },
+    body: {
+      discountType?: 'amount' | 'percent' | null;
+      discountValue?: number | null;
+      deliveryCharge?: number | null;
+    },
   ) {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/print-bill`, body);
   },

@@ -24,6 +24,7 @@ import { displayDate } from '@/lib/date';
 import { orderNumberLabel } from '@/lib/format';
 import { useTheme } from '@/theme/ThemeProvider';
 
+import { ProfitSection } from '../components/ProfitSection';
 import { useDashboardData } from '../hooks/useDashboardData';
 
 /**
@@ -163,6 +164,9 @@ export function DashboardScreen() {
           />
         ) : null}
       </StatRow>
+
+      {/* Profit ----------------------------------------------------------- */}
+      <ProfitSection showExpenses={data.canSeeExpenses} />
 
       {/* Weekly trend ----------------------------------------------------- */}
       <SectionCard title="Weekly Sales" subtitle="Revenue over the last 7 days">

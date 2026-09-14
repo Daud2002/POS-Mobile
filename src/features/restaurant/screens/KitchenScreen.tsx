@@ -82,6 +82,7 @@ export function KitchenScreen() {
       RealtimeEvents.orderCreated,
       RealtimeEvents.orderUpdated,
       RealtimeEvents.orderItemsAdded,
+      RealtimeEvents.orderItemsRemoved,
     ],
     onChange: refresh,
   });
@@ -89,7 +90,7 @@ export function KitchenScreen() {
   const print = useCallback(
     async (
       order: RestaurantOrder,
-      variant: 'new' | 'additional' | 'reprint',
+      variant: 'new' | 'additional' | 'reprint' | 'cancelled',
       items?: RestaurantOrder['items'],
     ) => {
       if (!hasPrinter) return;
@@ -125,11 +126,25 @@ export function KitchenScreen() {
       void print(payload.order, 'additional', payload.newItems);
     };
 
+    /**
+     * The cashier struck dishes off an order still on the board. The server
+     * only raises this for lines the kitchen was cooking, so every ticket
+     * here is one to act on: stop making what it lists.
+     */
+    const onItemsRemoved = (payload: { order: RestaurantOrder; removedItems: RestaurantOrder['items'] }) => {
+      if (!payload?.order || !kitchenLines(payload.removedItems).length) return;
+      toast.info(`Items cancelled on ${orderDestination(payload.order)}`);
+      ring();
+      void print(payload.order, 'cancelled', payload.removedItems);
+    };
+
     socket.on(RealtimeEvents.orderCreated, onCreated);
     socket.on(RealtimeEvents.orderItemsAdded, onItemsAdded);
+    socket.on(RealtimeEvents.orderItemsRemoved, onItemsRemoved);
     return () => {
       socket.off(RealtimeEvents.orderCreated, onCreated);
       socket.off(RealtimeEvents.orderItemsAdded, onItemsAdded);
+      socket.off(RealtimeEvents.orderItemsRemoved, onItemsRemoved);
     };
   }, [print, ring, toast]);
 

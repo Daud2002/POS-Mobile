@@ -99,14 +99,15 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
       },
       {
         /**
-         * Owner-only, so it carries no `permission` — entries without one are
-         * filtered to owners, the same way Employees is.
+         * The `shifts` module: an owner always holds it, and it is the one
+         * owner view a supervisor can be handed.
          */
         route: 'Cashiers',
         label: 'Cashiers',
         description: 'What each cashier collected, and what is still to collect',
         icon: HandCoins,
         tone: 'primary',
+        permission: 'shifts',
         accountType: 'restaurant',
       },
     ],
@@ -118,10 +119,10 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
         route: 'Customers',
         label: 'Customers',
         description: 'Contacts and purchase history',
+        restaurantDescription: 'Delivery customers, filed as orders come in',
         icon: Users,
         tone: 'info',
         permission: 'customers',
-        accountType: 'general',
       },
       {
         route: 'Employees',

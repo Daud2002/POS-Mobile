@@ -14,6 +14,7 @@ import { effectiveRoleOf } from './roles';
  */
 const RESTAURANT_MODULES: PermissionKey[] = [
   'dashboard', 'expenses', 'cashier', 'kitchen', 'tables', 'products', 'categories', 'orders',
+  'customers', 'shifts',
 ];
 
 const GENERAL_MODULES: PermissionKey[] = [
@@ -25,6 +26,8 @@ const RESTAURANT_BASE: Record<string, PermissionKey> = {
   cashier: 'cashier',
   kitchen: 'kitchen',
   waiter: 'tables',
+  // A supervisor is a cashier first: same till, same landing screen.
+  supervisor: 'cashier',
 };
 
 const GENERAL_BASE: PermissionKey = 'pos';
@@ -79,6 +82,24 @@ export function isOwner(user: AppUser | null | undefined): boolean {
   return role === 'store_owner' || role === 'restaurant_owner' || role === 'super_admin';
 }
 
+/**
+ * Who may reshape the expense ledger (its categories), as opposed to writing
+ * entries in it. Owners, and a supervisor holding the module — mirroring the
+ * server's category routes.
+ */
+export function canManageExpenseCategories(user: AppUser | null | undefined): boolean {
+  if (isOwner(user)) return true;
+  return effectiveRoleOf(user) === 'supervisor' && can(user, 'expenses');
+}
+
+/**
+ * Who may look at other people's drawers. Owners always hold `shifts`; a
+ * supervisor only once granted it.
+ */
+export function canSeeShifts(user: AppUser | null | undefined): boolean {
+  return isOwner(user) || can(user, 'shifts');
+}
+
 /** Labels for the permission list on the staff screen. */
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   dashboard: 'Dashboard',
@@ -92,6 +113,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   orders: 'Orders',
   customers: 'Customers',
   inventory: 'Inventory',
+  shifts: 'Shifts',
 };
 
 export const PERMISSION_HINTS: Record<PermissionKey, string> = {
@@ -106,4 +128,5 @@ export const PERMISSION_HINTS: Record<PermissionKey, string> = {
   orders: 'Full order history',
   customers: 'Contacts and purchase history',
   inventory: 'Stock levels and restocking',
+  shifts: 'Every cashier’s drawer, and what is still to be handed over',
 };

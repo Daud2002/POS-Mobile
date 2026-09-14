@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { queryKeys } from '@/api/queryKeys';
@@ -34,6 +34,7 @@ function isLowStock(product: Product): boolean {
 export function useDashboardData() {
   const storeId = useStoreId();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
   const ordersQuery = useQuery({
     queryKey: queryKeys.orders(),
@@ -137,6 +138,8 @@ export function useDashboardData() {
       void ordersQuery.refetch();
       void productsQuery.refetch();
       void expensesQuery.refetch();
+      // The profit section owns its own query; pull-to-refresh reaches it here.
+      void queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
   };
 }

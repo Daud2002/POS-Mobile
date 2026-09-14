@@ -37,8 +37,6 @@ export interface ReceiptData {
   /** Printed for the rider on delivery orders. */
   customerPhone?: string | null;
   deliveryAddress?: string | null;
-  /** Who carries a delivery, so the paper says which rider took it. */
-  riderName?: string | null;
   items: Array<{
     name: string;
     quantity: number;
@@ -52,6 +50,8 @@ export interface ReceiptData {
   /** Σ price × qty, before discounts — matches what the web receipt prints. */
   rawSubtotal: number;
   totalDiscount: number;
+  /** Added on top of the discounted food on a delivery. Printed only when > 0. */
+  deliveryCharge?: number;
   tax: number;
   total: number;
   paymentMethod?: string;
@@ -347,9 +347,6 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
       builder.line(framed(width, line));
     }
   }
-  if (data.riderName) {
-    builder.line(framed(width, `Rider: ${data.riderName}`));
-  }
 
   // --- Items ----------------------------------------------------------------
   builder.line(boxRule(width, { below: cols }));
@@ -400,6 +397,12 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
 
   if (data.totalDiscount > 0) {
     writeSplit(builder, width, 'Discount', `- ${money(data.totalDiscount)}`);
+  }
+
+  // The charge sits between the food and the payable so the customer can see
+  // it is on top of the discounted order, not hidden inside it.
+  if (Number(data.deliveryCharge) > 0) {
+    writeSplit(builder, width, 'Delivery charges', money(Number(data.deliveryCharge)));
   }
 
   // Tax is 0 on web (the 8% line is commented out) and is never printed there.

@@ -22,5 +22,11 @@ export function effectiveRoleOf(user: AppUser | null | undefined): EffectiveRole
 export function isRestaurantRole(user: AppUser | null | undefined): boolean {
   if (user?.accountType !== 'restaurant') return false;
   const role = effectiveRoleOf(user);
-  return role === 'waiter' || role === 'kitchen' || role === 'cashier' || role === 'restaurant_owner';
+  return (
+    role === 'waiter' ||
+    role === 'kitchen' ||
+    role === 'cashier' ||
+    role === 'supervisor' ||
+    role === 'restaurant_owner'
+  );
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Bike } from 'lucide-react-native';
+import {
+  Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Pencil, Save, Undo2,
+} from 'lucide-react-native';
 
 import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
@@ -21,7 +23,14 @@ import {
   orderLabel,
   orderStatusLabel,
 } from '@/lib/orderLabel';
-import { parseDiscountInput, previewDiscount } from '@/lib/discount';
+import {
+  DEFAULT_DELIVERY_CHARGE,
+  discountTextOf,
+  orderTotal,
+  parseChargeInput,
+  parseDiscountInput,
+  previewDiscount,
+} from '@/lib/discount';
 import {
   EMPTY_SPLIT_TEXT,
   SPLIT_METHODS,
@@ -35,12 +44,15 @@ import {
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { receiptFromRestaurantOrder } from '@/features/printing/templates/receiptFromOrder';
 import { tint, useTheme } from '@/theme';
-import type { Decimal, RestaurantOrder } from '@/api/types';
+import type { Decimal, RestaurantOrder, RestaurantOrderItem } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+import { CustomerSuggestions } from '../components/CustomerSuggestions';
 
 /** How the money can arrive. 'partial' opens the split editor. */
 const PAYMENT_METHODS = ['cash', 'card', 'online', 'partial'] as const;
+
+type NewOrderType = 'takeaway' | 'delivery';
 
 interface CartLine {
   productId: string;
@@ -52,6 +64,14 @@ interface CartLine {
   notes?: string;
   /** Served from the counter, not cooked. Decided by the category. */
   skipKitchen: boolean;
+}
+
+interface MenuProduct {
+  id: string;
+  name: string;
+  price: Decimal;
+  categoryId?: string;
+  image?: string | null;
 }
 
 /**
@@ -70,21 +90,38 @@ const STATUS_PRIORITY: Record<string, number> = {
   draft: 4,
 };
 
-/** What the discount box shows for a bill whose figure is already fixed. */
-function discountTextOf(order: RestaurantOrder): string {
-  if (!order.billPrinted || !order.discountType) return '';
-  return order.discountType === 'percent'
-    ? `${toNumber(order.discountValue)}%`
-    : String(toNumber(order.discountValue));
+/** Adds one of a product to a list of cart lines, merging onto an existing line. */
+function appendLine(prev: CartLine[], product: MenuProduct, icon: string, skipKitchen: boolean): CartLine[] {
+  const found = prev.find((l) => l.productId === product.id);
+  if (found) {
+    return prev.map((l) => (l.productId === product.id ? { ...l, quantity: l.quantity + 1 } : l));
+  }
+  return [...prev, {
+    productId: product.id,
+    name: product.name,
+    // Resolved once, here: a cart line carries no category of its own.
+    icon,
+    price: toNumber(product.price),
+    quantity: 1,
+    skipKitchen,
+  }];
+}
+
+function bumpLine(prev: CartLine[], productId: string, delta: number): CartLine[] {
+  return prev
+    .map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l))
+    .filter((l) => l.quantity > 0);
 }
 
 /**
  * The till.
  *
- * Checking out is TWO steps, the way a restaurant actually works: the bill is
- * printed first and taken to the customer; the money is booked only when the
- * cashier marks it paid. Printing claims the order for this till — from then
- * on no other cashier sees it — so two counters cannot both collect for it.
+ * A takeaway or delivery is BILLED AS IT IS PUNCHED: the cashier enters the
+ * discount (and, on a delivery, the charge) alongside the dishes, and one
+ * button sends it to the kitchen and prints the bill. The money is booked
+ * only when the cashier marks it paid, once the kitchen has handed it over.
+ * Printing claims the order for this till — from then on no other cashier
+ * sees it — so two counters cannot both collect for it.
  */
 export function RestaurantCashierScreen() {
   const theme = useTheme();
@@ -97,12 +134,22 @@ export function RestaurantCashierScreen() {
 
   const [selected, setSelected] = useState<RestaurantOrder | null>(null);
   const [discountText, setDiscountText] = useState('');
-  const [riderName, setRiderName] = useState('');
+  const [deliveryChargeText, setDeliveryChargeText] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<string>('cash');
   /** The three boxes of a split payment, as typed. */
   const [split, setSplit] = useState<SplitText>(EMPTY_SPLIT_TEXT);
   const [printing, setPrinting] = useState(false);
   const [settling, setSettling] = useState(false);
+
+  /**
+   * Editing the lines of the selected order. Removals are staged per line
+   * (how many to take off); additions are their own cart. Nothing is sent
+   * until "Save & reprint".
+   */
+  const [editing, setEditing] = useState(false);
+  const [removals, setRemovals] = useState<Record<string, number>>({});
+  const [additions, setAdditions] = useState<CartLine[]>([]);
+  const [saving, setSaving] = useState(false);
 
   /**
    * The open-drawer gate. Opening and closing a shift lives on the My Shift
@@ -118,13 +165,27 @@ export function RestaurantCashierScreen() {
 
   // Takeaway / delivery composer — the cashier's own order entry.
   const [composerOpen, setComposerOpen] = useState(false);
-  const [orderType, setOrderType] = useState<'takeaway' | 'delivery'>('takeaway');
+  const [orderType, setOrderType] = useState<NewOrderType>('takeaway');
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  /**
+   * Which customer field has focus, so the suggestion list searches on what
+   * is being typed there. Null when none does, which hides the list.
+   */
+  const [customerField, setCustomerField] = useState<'name' | 'phone' | 'address' | null>(null);
+  /**
+   * Hides the list a beat after the field blurs, so a tap on a suggestion
+   * lands before the list it was on disappears.
+   */
+  const blurCustomerField = (field: 'name' | 'phone' | 'address') => {
+    setTimeout(() => setCustomerField((f) => (f === field ? null : f)), 150);
+  };
+  const [composerDiscount, setComposerDiscount] = useState('');
+  const [composerCharge, setComposerCharge] = useState(String(DEFAULT_DELIVERY_CHARGE));
   const [creating, setCreating] = useState(false);
 
   const ordersQuery = useQuery({
@@ -170,6 +231,7 @@ export function RestaurantCashierScreen() {
       RealtimeEvents.orderCreated,
       RealtimeEvents.orderUpdated,
       RealtimeEvents.orderItemsAdded,
+      RealtimeEvents.orderItemsRemoved,
       RealtimeEvents.tableUpdated,
     ],
     onChange: refresh,
@@ -219,10 +281,6 @@ export function RestaurantCashierScreen() {
     return counts;
   }, [allProducts]);
 
-  const cartTotal = cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
-  /** Drinks alone never reach the kitchen, and the button should say so. */
-  const cartNeedsKitchen = cart.some((l) => !l.skipKitchen);
-
   const categoryById = useMemo(
     () => new Map(categories.map((c) => [c.id, c])),
     [categories],
@@ -232,43 +290,44 @@ export function RestaurantCashierScreen() {
   const iconOf = (product: { categoryId?: string; image?: string | null }) =>
     iconFor(product, product.categoryId ? categoryById.get(product.categoryId) : null);
 
-  const addToCart = (product: {
-    id: string;
-    name: string;
-    price: Decimal;
-    categoryId?: string;
-    image?: string | null;
-  }) =>
-    setCart((prev) => {
-      const found = prev.find((l) => l.productId === product.id);
-      if (found) {
-        return prev.map((l) =>
-          l.productId === product.id ? { ...l, quantity: l.quantity + 1 } : l,
-        );
-      }
-      return [...prev, {
-        productId: product.id,
-        name: product.name,
-        // Resolved once, here: a cart line carries no category of its own.
-        icon: iconOf(product),
-        price: toNumber(product.price),
-        quantity: 1,
-        skipKitchen: categorySkipsKitchen(
-          product.categoryId ? categoryById.get(product.categoryId) : null,
-        ),
-      }];
-    });
-
-  const changeQty = (productId: string, delta: number) =>
-    setCart((prev) =>
-      prev
-        .map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0),
+  const lineFor = (prev: CartLine[], product: MenuProduct) =>
+    appendLine(
+      prev,
+      product,
+      iconOf(product),
+      categorySkipsKitchen(product.categoryId ? categoryById.get(product.categoryId) : null),
     );
 
-  const setNotes = (productId: string, notes: string) =>
-    setCart((prev) => prev.map((l) => (l.productId === productId ? { ...l, notes } : l)));
+  const setNotesOn =
+    (setLines: (update: (prev: CartLine[]) => CartLine[]) => void) =>
+    (productId: string, notes: string) =>
+      setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, notes } : l)));
 
+  // -------------------------------------------------------------- compose
+
+  const cartSubtotal = cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
+  const cartDiscount = previewDiscount(composerDiscount, cartSubtotal);
+  const cartCharge = orderType === 'delivery' ? parseChargeInput(composerCharge) : 0;
+  const cartTotal = orderTotal(cartSubtotal, cartDiscount, cartCharge, orderType);
+  /** Drinks alone never reach the kitchen, and the button should say so. */
+  const cartNeedsKitchen = cart.some((l) => !l.skipKitchen);
+
+  const resetComposer = () => {
+    setComposerOpen(false);
+    setCart([]);
+    setCustomerName('');
+    setCustomerPhone('');
+    setDeliveryAddress('');
+    setCustomerField(null);
+    setComposerDiscount('');
+    setComposerCharge(String(DEFAULT_DELIVERY_CHARGE));
+  };
+
+  /**
+   * Sends the order — with its discount and charge — and, unless it is a
+   * draft, has the server record the bill as printed so it can be printed
+   * here from the server's figures. A draft is saved quietly.
+   */
   const createOrder = async (asDraft: boolean) => {
     if (!cart.length) {
       toast.error('Add at least one item');
@@ -280,7 +339,8 @@ export function RestaurantCashierScreen() {
     }
     setCreating(true);
     try {
-      await restaurantApi.createOrder({
+      const { discountType, discountValue } = parseDiscountInput(composerDiscount);
+      const order = await restaurantApi.createOrder({
         orderType,
         items: cart.map((l) => ({
           productId: l.productId,
@@ -291,20 +351,26 @@ export function RestaurantCashierScreen() {
         customerName: customerName.trim() || undefined,
         customerPhone: customerPhone.trim() || undefined,
         deliveryAddress: orderType === 'delivery' ? deliveryAddress.trim() : undefined,
+        discountType: discountType ?? undefined,
+        discountValue: discountValue ?? undefined,
+        deliveryCharge: orderType === 'delivery' ? parseChargeInput(composerCharge) : undefined,
+        printBill: !asDraft,
       });
       toast.success(
         asDraft
           ? 'Draft saved'
           : cartNeedsKitchen
-            ? 'Order sent to kitchen'
-            : 'Order placed — nothing for the kitchen',
+            ? 'Order sent to kitchen — printing the bill'
+            : 'Order placed — printing the bill',
       );
-      setComposerOpen(false);
-      setCart([]);
-      setCustomerName('');
-      setCustomerPhone('');
-      setDeliveryAddress('');
+      resetComposer();
       refresh();
+      if (!asDraft && hasPrinter) {
+        const result = await printReceipt(
+          receiptFromRestaurantOrder({ order, store: storeQuery.data, currency }),
+        );
+        if (!result.ok) toast.error(result.error ?? 'Receipt printing failed');
+      }
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to create order');
     } finally {
@@ -314,21 +380,35 @@ export function RestaurantCashierScreen() {
 
   // ------------------------------------------------------------- checkout
 
-  const subtotal = useMemo(
-    () => (selected?.items ?? []).reduce((sum, i) => sum + toNumber(i.total), 0),
-    [selected],
-  );
   const billPrinted = !!selected?.billPrinted;
+  const isDelivery = selected?.orderType === 'delivery';
+
   /**
-   * Before printing, the discount box drives the preview. After printing the
-   * figure is FIXED — it is what the customer is holding — so the stored one
-   * is shown and the box is locked; reprinting is how it changes.
+   * What the bill will say once the staged edits are saved: the existing
+   * lines less whatever is marked for removal, plus the additions. With
+   * nothing staged this is simply the order as stored.
    */
+  const previewSubtotal = useMemo(() => {
+    const kept = (selected?.items ?? []).reduce((sum, i) => {
+      const left = Math.max(toNumber(i.quantity) - (removals[i.id] ?? 0), 0);
+      return sum + toNumber(i.unitPrice) * left;
+    }, 0);
+    const added = additions.reduce((sum, l) => sum + l.price * l.quantity, 0);
+    return kept + added;
+  }, [selected, removals, additions]);
+
   const discountPreview = useMemo(
-    () => (billPrinted ? toNumber(selected?.discount) : previewDiscount(discountText, subtotal)),
-    [billPrinted, selected?.discount, discountText, subtotal],
+    () => previewDiscount(discountText, previewSubtotal),
+    [discountText, previewSubtotal],
   );
-  const billTotal = Math.max(subtotal - discountPreview, 0);
+  const chargePreview = isDelivery ? parseChargeInput(deliveryChargeText) : 0;
+  const billTotal = orderTotal(previewSubtotal, discountPreview, chargePreview, selected?.orderType);
+
+  const hasItemChanges = additions.length > 0 || Object.values(removals).some((q) => q > 0);
+  const remainingCount = (selected?.items ?? []).reduce(
+    (n, i) => n + Math.max(toNumber(i.quantity) - (removals[i.id] ?? 0), 0),
+    0,
+  );
 
   /**
    * A split payment must account for every rupee before it can be taken —
@@ -349,42 +429,68 @@ export function RestaurantCashierScreen() {
     }));
   };
 
+  const discardEdits = () => {
+    setEditing(false);
+    setRemovals({});
+    setAdditions([]);
+  };
+
   const openOrder = (order: RestaurantOrder) => {
     setSelected(order);
+    // The boxes show what the order already carries, printed or not.
     setDiscountText(discountTextOf(order));
-    setRiderName(order.riderName ?? '');
+    setDeliveryChargeText(
+      order.orderType === 'delivery' ? String(toNumber(order.deliveryCharge)) : '',
+    );
     setPaymentMethod('cash');
     setSplit(EMPTY_SPLIT_TEXT);
+    discardEdits();
+  };
+
+  const closeOrder = () => {
+    setSelected(null);
+    setDiscountText('');
+    setDeliveryChargeText('');
+    setSplit(EMPTY_SPLIT_TEXT);
+    discardEdits();
+  };
+
+  const canEdit =
+    !!selected && selected.orderStatus !== 'draft' && !printing && !settling && !saving;
+
+  /** What the till sends the server for the money boxes as they stand. */
+  const billFigures = (type: string | null | undefined) => {
+    const { discountType, discountValue } = parseDiscountInput(discountText);
+    return {
+      // null clears a discount the cashier blanked out; the server keeps the
+      // stored one only when the field is absent altogether.
+      discountType: discountType ?? null,
+      discountValue: discountValue ?? null,
+      deliveryCharge: type === 'delivery' ? parseChargeInput(deliveryChargeText) : undefined,
+    };
+  };
+
+  const printPaper = async (order: RestaurantOrder) => {
+    // Print from the SERVER's numbers, never the local preview, so paper
+    // always matches what was stored.
+    if (!hasPrinter) return;
+    const result = await printReceipt(
+      receiptFromRestaurantOrder({ order, store: storeQuery.data, currency }),
+    );
+    if (!result.ok) toast.error(result.error ?? 'Receipt printing failed');
   };
 
   /**
-   * Step one. The server fixes the discount, records the rider and claims
-   * the order for this cashier; the paper is printed from what it returns.
+   * Prints, or reprints, the bill with the discount and charge as they stand
+   * in the boxes. The server fixes the figures and claims the order for this
+   * cashier; the paper is printed from what it returns.
    */
   const printBill = async () => {
     if (!selected) return;
-    if (selected.orderType === 'delivery' && !riderName.trim()) {
-      toast.error("Enter the rider's name — it is printed on the bill");
-      return;
-    }
     setPrinting(true);
     try {
-      const { discountType, discountValue } = parseDiscountInput(discountText);
-      const bill = await restaurantApi.printBill(selected.id, {
-        discountType: discountType ?? undefined,
-        discountValue: discountValue ?? undefined,
-        riderName: riderName.trim() || undefined,
-      });
-
-      // Print from the SERVER's numbers, never the local preview, so paper
-      // always matches what was stored.
-      if (hasPrinter) {
-        const result = await printReceipt(
-          receiptFromRestaurantOrder({ order: bill, store: storeQuery.data, currency }),
-        );
-        if (!result.ok) toast.error(result.error ?? 'Receipt printing failed');
-      }
-
+      const bill = await restaurantApi.printBill(selected.id, billFigures(selected.orderType));
+      await printPaper(bill);
       toast.success(billPrinted ? 'Bill reprinted' : 'Bill printed — mark it paid once the money is in');
       setSelected(bill);
       refresh();
@@ -395,7 +501,84 @@ export function RestaurantCashierScreen() {
     }
   };
 
-  /** Step two: the money. Charges exactly what was printed. */
+  /** Marks one more of an existing line for removal, up to the whole line. */
+  const removeOne = (item: RestaurantOrderItem) => {
+    setEditing(true);
+    setRemovals((prev) => ({
+      ...prev,
+      [item.id]: Math.min((prev[item.id] ?? 0) + 1, toNumber(item.quantity)),
+    }));
+  };
+
+  const restoreOne = (item: RestaurantOrderItem) =>
+    setRemovals((prev) => ({ ...prev, [item.id]: Math.max((prev[item.id] ?? 0) - 1, 0) }));
+
+  /**
+   * Sends the staged edits, then reprints. Additions go first so an order
+   * can have every original line replaced — the server refuses a removal
+   * that would leave nothing, and it sees the additions before it does.
+   *
+   * The selected order may be swapped for a fresh copy mid-sequence (each
+   * step raises order:updated and the list refetches), which is why the id
+   * and the staged data are captured up front rather than read from state.
+   */
+  const saveEdits = async () => {
+    if (!selected || !hasItemChanges) return;
+    if (remainingCount === 0 && additions.length === 0) {
+      toast.error('That would leave nothing on the order — cancel it instead');
+      return;
+    }
+    const id = selected.id;
+    const type = selected.orderType;
+    const toAdd = additions.map((l) => ({
+      productId: l.productId,
+      quantity: l.quantity,
+      notes: l.notes?.trim() || undefined,
+    }));
+    const toRemove = Object.entries(removals)
+      .filter(([, quantity]) => quantity > 0)
+      .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
+
+    setSaving(true);
+    let persisted = false;
+    try {
+      if (toAdd.length) {
+        await restaurantApi.addItems(id, toAdd);
+        persisted = true;
+      }
+      if (toRemove.length) {
+        await restaurantApi.removeItems(id, toRemove);
+        persisted = true;
+      }
+      const bill = await restaurantApi.printBill(id, billFigures(type));
+      discardEdits();
+      setSelected(bill);
+      refresh();
+      await printPaper(bill);
+      toast.success('Order updated — bill reprinted');
+    } catch (error: any) {
+      if (persisted) {
+        // The order changed on the server; only the paper is missing.
+        toast.error(
+          `Changes saved, but the bill did not reprint: ${error?.message ?? 'unknown error'}. Tap Reprint bill.`,
+        );
+        discardEdits();
+        refresh();
+      } else {
+        toast.error(error?.message ?? 'Failed to update the order');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * Step two: the money. Charges exactly what was printed.
+   *
+   * Deliberately prints NOTHING. The customer already holds the bill — it
+   * came out when the order was punched, or on the last reprint — and a
+   * second slip at payment time is paper nobody asked for.
+   */
   const markPaid = async () => {
     if (!selected) return;
     if (isPartial && !splitBalanced) {
@@ -409,9 +592,7 @@ export function RestaurantCashierScreen() {
         isPartial ? { paymentMethod, split: parsedSplit } : { paymentMethod },
       );
       toast.success(selected.tableName ? `Paid — ${selected.tableName} is now free` : 'Paid');
-      setSelected(null);
-      setDiscountText('');
-      setSplit(EMPTY_SPLIT_TEXT);
+      closeOrder();
       refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to mark the order paid');
@@ -425,7 +606,7 @@ export function RestaurantCashierScreen() {
     try {
       await restaurantApi.cancel(selected.id);
       toast.success('Order cancelled');
-      setSelected(null);
+      closeOrder();
       refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to cancel');
@@ -441,6 +622,121 @@ export function RestaurantCashierScreen() {
       backgroundColor: active ? tint(theme.colors.primary, 0.1) : 'transparent',
     },
   ];
+
+  /**
+   * The menu: search, category chips and the dish grid. Used by the composer
+   * and by the checkout sheet's edit mode, so a dish is picked the same way
+   * whether it starts an order or joins one.
+   */
+  const renderMenu = (onPick: (product: MenuProduct) => void) => (
+    <>
+      <SearchInput value={search} onChangeText={setSearch} placeholder="Search dishes…" />
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.categoryRow}
+      >
+        <Pressable
+          onPress={() => setActiveCategory('all')}
+          style={[
+            styles.categoryPill,
+            {
+              borderRadius: theme.radius.full,
+              borderColor:
+                activeCategory === 'all' ? theme.colors.primary : theme.colors.border,
+              backgroundColor:
+                activeCategory === 'all' ? tint(theme.colors.primary, 0.1) : 'transparent',
+            },
+          ]}
+        >
+          <Text variant="caption">All ({allProducts.length})</Text>
+        </Pressable>
+        {categories.map((category) => (
+          <Pressable
+            key={category.id}
+            onPress={() => setActiveCategory(category.id)}
+            style={[
+              styles.categoryPill,
+              {
+                borderRadius: theme.radius.full,
+                borderColor:
+                  activeCategory === category.id ? theme.colors.primary : theme.colors.border,
+                backgroundColor:
+                  activeCategory === category.id
+                    ? tint(theme.colors.primary, 0.1)
+                    : 'transparent',
+              },
+            ]}
+          >
+            <Text variant="caption">
+              {category.image ? `${category.image} ` : ''}
+              {category.name} ({categoryCounts.get(category.id) ?? 0})
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <View style={styles.productGrid}>
+        {filteredProducts.length === 0 && (
+          <Text variant="caption" color="mutedForeground">No dishes in this category.</Text>
+        )}
+        {filteredProducts.map((product) => (
+          <Pressable
+            key={product.id}
+            onPress={() => onPick(product as MenuProduct)}
+            style={[
+              styles.productCard,
+              {
+                borderColor: theme.colors.border,
+                borderRadius: theme.radius.md,
+                backgroundColor: theme.colors.card,
+              },
+            ]}
+          >
+            <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
+            <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
+            <Text variant="caption" color="mutedForeground">
+              {format(toNumber(product.price))}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </>
+  );
+
+  /** Per-line qty/notes controls, shared by the cart and the additions list. */
+  const renderCartLines = (
+    lines: CartLine[],
+    setLines: (update: (prev: CartLine[]) => CartLine[]) => void,
+  ) =>
+    lines.map((line) => (
+      <View key={line.productId} style={{ gap: theme.spacing.xs }}>
+        <View style={styles.itemRow}>
+          <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
+          <Text variant="body" style={{ flex: 1 }} numberOfLines={1}>{line.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Pressable onPress={() => setLines((prev) => bumpLine(prev, line.productId, -1))} hitSlop={8}>
+              <Minus size={14} color={theme.colors.foreground} />
+            </Pressable>
+            <Text variant="bodySemibold">{line.quantity}</Text>
+            <Pressable onPress={() => setLines((prev) => bumpLine(prev, line.productId, 1))} hitSlop={8}>
+              <Plus size={14} color={theme.colors.foreground} />
+            </Pressable>
+          </View>
+        </View>
+        {/* Per-line kitchen note, exactly as the waiter screen offers — it
+            prints on the kitchen ticket. Drinks never reach the kitchen, so
+            they take none. */}
+        {!line.skipKitchen && (
+          <Input
+            value={line.notes ?? ''}
+            onChangeText={(text) => setNotesOn(setLines)(line.productId, text)}
+            placeholder="Note for kitchen…"
+          />
+        )}
+      </View>
+    ));
 
   return (
     <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh}>
@@ -507,63 +803,92 @@ export function RestaurantCashierScreen() {
       {/* ------------------------------------------------- checkout sheet */}
       <Sheet
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={closeOrder}
         title={selected ? orderDestination(selected) : ''}
         description={
           selected
-            ? `${orderLabel(selected)} · ${orderStatusLabel(orderDisplayStatus(selected))}`
+            ? `${orderLabel(selected)} · ${orderStatusLabel(orderDisplayStatus(selected))}${
+                toNumber(selected.reprintCount) > 0 ? ` · reprinted ×${toNumber(selected.reprintCount)}` : ''
+              }`
             : undefined
         }
         footer={
           selected ? (
-            /*
-              Two buttons for two moments. Print first — the customer gets
-              the paper; then Mark as paid, once the money is actually in the
-              drawer. Reprinting after a change is the same button.
-            */
-            <View style={{ flex: 1, gap: theme.spacing.sm }}>
-              <Button
-                variant={billPrinted ? 'outline' : 'primary'}
-                onPress={printBill}
-                loading={printing}
-                disabled={settling || selected.orderStatus === 'draft'}
-                icon={
-                  <Printer
-                    size={16}
-                    color={billPrinted ? theme.colors.foreground : theme.colors.primaryForeground}
+            editing ? (
+              <View style={{ flex: 1, gap: theme.spacing.sm }}>
+                <Button
+                  onPress={saveEdits}
+                  loading={saving}
+                  disabled={!hasItemChanges}
+                  icon={<Save size={16} color={theme.colors.primaryForeground} />}
+                  label="Save & reprint bill"
+                />
+                <Button
+                  variant="outline"
+                  onPress={discardEdits}
+                  disabled={saving}
+                  icon={<Undo2 size={16} color={theme.colors.foreground} />}
+                  label="Discard changes"
+                />
+              </View>
+            ) : (
+              /*
+                Print (or reprint) first — the customer gets the paper; then
+                Mark as paid, once the money is actually in the drawer.
+              */
+              <View style={{ flex: 1, gap: theme.spacing.sm }}>
+                <Button
+                  variant={billPrinted ? 'outline' : 'primary'}
+                  onPress={printBill}
+                  loading={printing}
+                  disabled={settling || selected.orderStatus === 'draft'}
+                  icon={
+                    <Printer
+                      size={16}
+                      color={billPrinted ? theme.colors.foreground : theme.colors.primaryForeground}
+                    />
+                  }
+                  label={billPrinted ? 'Reprint bill' : 'Print bill'}
+                />
+                <Button
+                  onPress={markPaid}
+                  loading={settling}
+                  disabled={
+                    printing ||
+                    !billPrinted ||
+                    (isPartial && !splitBalanced) ||
+                    // The server rejects this too; disabling here is only so the
+                    // cashier is told why before they try.
+                    shiftBlocked
+                  }
+                  icon={<BadgeCheck size={16} color={theme.colors.primaryForeground} />}
+                  label="Mark as paid"
+                />
+                <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+                  <Button
+                    variant="outline"
+                    onPress={() => setEditing(true)}
+                    disabled={!canEdit}
+                    icon={<Pencil size={16} color={theme.colors.foreground} />}
+                    label="Edit items"
                   />
-                }
-                label={billPrinted ? 'Reprint bill' : 'Print bill'}
-              />
-              <Button
-                onPress={markPaid}
-                loading={settling}
-                disabled={
-                  printing ||
-                  !billPrinted ||
-                  (isPartial && !splitBalanced) ||
-                  // The server rejects this too; disabling here is only so the
-                  // cashier is told why before they try.
-                  shiftBlocked
-                }
-                icon={<BadgeCheck size={16} color={theme.colors.primaryForeground} />}
-                label="Mark as paid"
-              />
-              <Button
-                variant="outline"
-                onPress={cancel}
-                disabled={printing || settling}
-                icon={<Ban size={16} color={theme.colors.destructive} />}
-                label="Cancel order"
-              />
-            </View>
+                  <Button
+                    variant="outline"
+                    onPress={cancel}
+                    disabled={printing || settling}
+                    icon={<Ban size={16} color={theme.colors.destructive} />}
+                    label="Cancel order"
+                  />
+                </View>
+              </View>
+            )
           ) : undefined
         }
       >
         {selected && (
           <>
             {/* The claim, spelled out: this bill is now this till's. */}
-            {billPrinted && (
+            {billPrinted && !editing && (
               <View
                 style={[
                   styles.notice,
@@ -578,44 +903,103 @@ export function RestaurantCashierScreen() {
                 </Text>
               </View>
             )}
+            {editing && (
+              <View
+                style={[
+                  styles.notice,
+                  { backgroundColor: tint(theme.colors.warning, 0.12), borderRadius: theme.radius.md },
+                ]}
+              >
+                <Pencil size={16} color={theme.colors.warning} />
+                <Text variant="caption" style={{ flex: 1 }}>
+                  Editing. Use − to strike lines off and pick dishes below to add them. Nothing
+                  changes until you save, and the bill reprints when you do.
+                </Text>
+              </View>
+            )}
 
             <View style={{ gap: theme.spacing.xs }}>
-              {(selected.items ?? []).map((item) => (
-                <View key={item.id} style={styles.itemRow}>
-                  <Text variant="body" style={{ flex: 1 }} numberOfLines={2}>
-                    {item.quantity} × {item.productName}
-                    {item.isParcel ? (
-                      <Text variant="caption" style={{ color: theme.colors.info }}>
-                        {'  '}(parcel)
-                      </Text>
-                    ) : null}
-                    {item.notes ? (
-                      <Text variant="caption" style={{ color: theme.colors.warning }}>
-                        {'  '}— {item.notes}
-                      </Text>
-                    ) : null}
+              {(selected.items ?? []).map((item) => {
+                const removing = removals[item.id] ?? 0;
+                const left = Math.max(toNumber(item.quantity) - removing, 0);
+                return (
+                  <View key={item.id} style={styles.itemRow}>
+                    <Text
+                      variant="body"
+                      style={[
+                        { flex: 1 },
+                        left === 0 ? { textDecorationLine: 'line-through', color: theme.colors.mutedForeground } : null,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {left} × {item.productName}
+                      {removing > 0 && left > 0 ? (
+                        <Text variant="caption" style={{ color: theme.colors.destructive }}>
+                          {'  '}(−{removing})
+                        </Text>
+                      ) : null}
+                      {item.isParcel ? (
+                        <Text variant="caption" style={{ color: theme.colors.info }}>
+                          {'  '}(parcel)
+                        </Text>
+                      ) : null}
+                      {item.notes ? (
+                        <Text variant="caption" style={{ color: theme.colors.warning }}>
+                          {'  '}— {item.notes}
+                        </Text>
+                      ) : null}
+                    </Text>
+                    {canEdit && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <Pressable
+                          onPress={() => removeOne(item)}
+                          disabled={left === 0}
+                          hitSlop={8}
+                          style={{ opacity: left === 0 ? 0.4 : 1 }}
+                        >
+                          <Minus size={14} color={theme.colors.destructive} />
+                        </Pressable>
+                        {removing > 0 && (
+                          <Pressable onPress={() => restoreOne(item)} hitSlop={8}>
+                            <Plus size={14} color={theme.colors.foreground} />
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                    <Text variant="body" style={{ minWidth: 64, textAlign: 'right' }}>
+                      {format(toNumber(item.unitPrice) * left)}
+                    </Text>
+                  </View>
+                );
+              })}
+
+              {additions.length > 0 && (
+                <View style={[styles.totals, { borderColor: theme.colors.border, gap: theme.spacing.sm }]}>
+                  <Text variant="caption" color="mutedForeground" style={{ textTransform: 'uppercase' }}>
+                    Adding
                   </Text>
-                  <Text variant="body">{format(toNumber(item.total))}</Text>
+                  {renderCartLines(additions, setAdditions)}
                 </View>
-              ))}
+              )}
             </View>
 
             <View style={[styles.totals, { borderColor: theme.colors.border }]}>
               <View style={styles.itemRow}>
                 <Text variant="caption" color="mutedForeground">Subtotal</Text>
-                <Text variant="body">{format(subtotal)}</Text>
+                <Text variant="body">{format(previewSubtotal)}</Text>
               </View>
               {discountPreview > 0 && (
                 <View style={styles.itemRow}>
-                  <Text variant="caption" style={{ color: theme.colors.destructive }}>
-                    Discount
-                    {billPrinted && selected.discountType === 'percent' && selected.discountValue
-                      ? ` (${toNumber(selected.discountValue)}%)`
-                      : ''}
-                  </Text>
+                  <Text variant="caption" style={{ color: theme.colors.destructive }}>Discount</Text>
                   <Text variant="body" style={{ color: theme.colors.destructive }}>
                     -{format(discountPreview)}
                   </Text>
+                </View>
+              )}
+              {isDelivery && chargePreview > 0 && (
+                <View style={styles.itemRow}>
+                  <Text variant="caption" color="mutedForeground">Delivery charges</Text>
+                  <Text variant="body">{format(chargePreview)}</Text>
                 </View>
               )}
               <View style={styles.itemRow}>
@@ -630,27 +1014,31 @@ export function RestaurantCashierScreen() {
               onChangeText={setDiscountText}
               placeholder="250 or 25%"
               autoCapitalize="none"
-              editable={!billPrinted}
-              hint={
-                billPrinted
-                  ? 'Fixed when the bill was printed. Reprint the bill to change it.'
-                  : 'Type 250 for a flat amount off, or 25% for a quarter off the order.'
-              }
+              editable={selected.orderStatus !== 'draft'}
+              hint="Type 250 for a flat amount off, or 25% for a quarter off. Reprinting applies whatever is in the boxes."
             />
 
-            {/* A delivery bill names its rider, so it is asked for here. */}
-            {selected.orderType === 'delivery' && (
+            {isDelivery && (
               <Input
-                label="Rider"
-                value={riderName}
-                onChangeText={setRiderName}
-                placeholder="Who is delivering this order?"
-                leading={<Bike size={16} color={theme.colors.mutedForeground} />}
-                hint="Printed on the bill the rider takes with them."
+                label="Delivery charge"
+                value={deliveryChargeText}
+                onChangeText={setDeliveryChargeText}
+                placeholder={String(DEFAULT_DELIVERY_CHARGE)}
+                keyboardType="decimal-pad"
+                hint="Added on top of the discounted order. Clear it for a free delivery."
               />
             )}
 
-            {billPrinted && (
+            {editing && (
+              <View style={{ gap: theme.spacing.sm }}>
+                <Text variant="caption" color="mutedForeground" style={{ textTransform: 'uppercase' }}>
+                  Add dishes
+                </Text>
+                {renderMenu((product) => setAdditions((prev) => lineFor(prev, product)))}
+              </View>
+            )}
+
+            {billPrinted && !editing && (
               <View style={{ gap: theme.spacing.sm }}>
                 <Text variant="caption">Paid by</Text>
                 <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
@@ -748,7 +1136,7 @@ export function RestaurantCashierScreen() {
                 This is still a draft. A waiter must send it to the kitchen first.
               </Text>
             )}
-            {!billPrinted && selected.orderStatus !== 'draft' && (
+            {!billPrinted && selected.orderStatus !== 'draft' && !editing && (
               <Text variant="caption" color="mutedForeground">
                 Print the bill first. Once it is printed, only this till can mark it paid.
                 {!hasPrinter ? ' No printer is paired, so the bill is recorded without paper.' : ''}
@@ -760,7 +1148,7 @@ export function RestaurantCashierScreen() {
                 against a drawer.
               </Text>
             )}
-            {selected.tableName && billPrinted ? (
+            {selected.tableName && billPrinted && !editing ? (
               <Text variant="caption" color="mutedForeground">
                 Marking it paid frees {selected.tableName} for the next customer.
               </Text>
@@ -780,7 +1168,8 @@ export function RestaurantCashierScreen() {
               onPress={() => createOrder(false)}
               loading={creating}
               disabled={!cart.length}
-              label={cartNeedsKitchen ? 'Send to kitchen' : 'Place order'}
+              icon={<Printer size={16} color={theme.colors.primaryForeground} />}
+              label={cartNeedsKitchen ? 'Send to kitchen & print bill' : 'Place order & print bill'}
             />
             <Button
               variant="outline"
@@ -805,119 +1194,96 @@ export function RestaurantCashierScreen() {
         </View>
 
         <View style={{ gap: theme.spacing.sm }}>
-          <Input value={customerName} onChangeText={setCustomerName} placeholder="Customer name" />
-          <Input value={customerPhone} onChangeText={setCustomerPhone} placeholder="Phone" keyboardType="phone-pad" />
+          {/* The directory, above the fields, as the cashier types into any of them. */}
+          <CustomerSuggestions
+            visible={customerField !== null}
+            query={
+              customerField === 'name'
+                ? customerName
+                : customerField === 'phone'
+                  ? customerPhone
+                  : customerField === 'address'
+                    ? deliveryAddress
+                    : ''
+            }
+            onSelect={(customer) => {
+              setCustomerName(customer.name);
+              setCustomerPhone(customer.phone);
+              if (customer.address) setDeliveryAddress(customer.address);
+              setCustomerField(null);
+            }}
+          />
+          <Input
+            value={customerName}
+            onChangeText={setCustomerName}
+            placeholder="Customer name"
+            onFocus={() => setCustomerField('name')}
+            onBlur={() => blurCustomerField('name')}
+            autoComplete="off"
+          />
+          <Input
+            value={customerPhone}
+            onChangeText={setCustomerPhone}
+            placeholder="Phone"
+            keyboardType="phone-pad"
+            onFocus={() => setCustomerField('phone')}
+            onBlur={() => blurCustomerField('phone')}
+            autoComplete="off"
+          />
           {orderType === 'delivery' && (
             <Input
               value={deliveryAddress}
               onChangeText={setDeliveryAddress}
-              placeholder="Delivery address"
+              placeholder="Delivery address (required)"
+              onFocus={() => setCustomerField('address')}
+              onBlur={() => blurCustomerField('address')}
+              autoComplete="off"
             />
           )}
+          {/* The bill prints as the order is sent, so its figures are set here. */}
+          <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+            <Input
+              containerStyle={{ flex: 1 }}
+              label="Discount"
+              value={composerDiscount}
+              onChangeText={setComposerDiscount}
+              placeholder="250 or 25%"
+              autoCapitalize="none"
+            />
+            {orderType === 'delivery' && (
+              <Input
+                containerStyle={{ flex: 1 }}
+                label="Delivery charge"
+                value={composerCharge}
+                onChangeText={setComposerCharge}
+                placeholder={String(DEFAULT_DELIVERY_CHARGE)}
+                keyboardType="decimal-pad"
+              />
+            )}
+          </View>
         </View>
 
-        <SearchInput value={search} onChangeText={setSearch} placeholder="Search dishes…" />
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryRow}
-        >
-          <Pressable
-            onPress={() => setActiveCategory('all')}
-            style={[
-              styles.categoryPill,
-              {
-                borderRadius: theme.radius.full,
-                borderColor:
-                  activeCategory === 'all' ? theme.colors.primary : theme.colors.border,
-                backgroundColor:
-                  activeCategory === 'all' ? tint(theme.colors.primary, 0.1) : 'transparent',
-              },
-            ]}
-          >
-            <Text variant="caption">All ({allProducts.length})</Text>
-          </Pressable>
-          {categories.map((category) => (
-            <Pressable
-              key={category.id}
-              onPress={() => setActiveCategory(category.id)}
-              style={[
-                styles.categoryPill,
-                {
-                  borderRadius: theme.radius.full,
-                  borderColor:
-                    activeCategory === category.id ? theme.colors.primary : theme.colors.border,
-                  backgroundColor:
-                    activeCategory === category.id
-                      ? tint(theme.colors.primary, 0.1)
-                      : 'transparent',
-                },
-              ]}
-            >
-              <Text variant="caption">
-                {category.image ? `${category.image} ` : ''}
-                {category.name} ({categoryCounts.get(category.id) ?? 0})
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
-        <View style={styles.productGrid}>
-          {filteredProducts.length === 0 && (
-            <Text variant="caption" color="mutedForeground">No dishes in this category.</Text>
-          )}
-          {filteredProducts.map((product) => (
-            <Pressable
-              key={product.id}
-              onPress={() => addToCart(product as any)}
-              style={[
-                styles.productCard,
-                {
-                  borderColor: theme.colors.border,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: theme.colors.card,
-                },
-              ]}
-            >
-              <Text style={{ fontSize: 20, lineHeight: 26 }}>{iconOf(product)}</Text>
-              <Text variant="bodySemibold" numberOfLines={2}>{product.name}</Text>
-              <Text variant="caption" color="mutedForeground">
-                {format(toNumber(product.price))}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {renderMenu((product) => setCart((prev) => lineFor(prev, product)))}
 
         {cart.length > 0 && (
           <View style={[styles.totals, { borderColor: theme.colors.border, gap: theme.spacing.sm }]}>
-            {cart.map((line) => (
-              <View key={line.productId} style={{ gap: theme.spacing.xs }}>
-                <View style={styles.itemRow}>
-                  <Text style={{ fontSize: 16, lineHeight: 22 }}>{line.icon}</Text>
-                  <Text variant="body" style={{ flex: 1 }} numberOfLines={1}>{line.name}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <Pressable onPress={() => changeQty(line.productId, -1)} hitSlop={8}>
-                      <Minus size={14} color={theme.colors.foreground} />
-                    </Pressable>
-                    <Text variant="bodySemibold">{line.quantity}</Text>
-                    <Pressable onPress={() => changeQty(line.productId, 1)} hitSlop={8}>
-                      <Plus size={14} color={theme.colors.foreground} />
-                    </Pressable>
-                  </View>
-                </View>
-                {/* Per-line kitchen note, exactly as the waiter screen
-                    offers — it prints on the kitchen ticket. Drinks never
-                    reach the kitchen, so they take none. */}
-                {!line.skipKitchen && (
-                  <Input
-                    value={line.notes ?? ''}
-                    onChangeText={(text) => setNotes(line.productId, text)}
-                    placeholder="Note for kitchen…"
-                  />
-                )}
+            {renderCartLines(cart, setCart)}
+            <View style={styles.itemRow}>
+              <Text variant="caption" color="mutedForeground">Subtotal</Text>
+              <Text variant="body">{format(cartSubtotal)}</Text>
+            </View>
+            {cartDiscount > 0 && (
+              <View style={styles.itemRow}>
+                <Text variant="caption" style={{ color: theme.colors.destructive }}>Discount</Text>
+                <Text variant="body" style={{ color: theme.colors.destructive }}>-{format(cartDiscount)}</Text>
               </View>
-            ))}
+            )}
+            {orderType === 'delivery' && cartCharge > 0 && (
+              <View style={styles.itemRow}>
+                <Text variant="caption" color="mutedForeground">Delivery charges</Text>
+                <Text variant="body">{format(cartCharge)}</Text>
+              </View>
+            )}
             <View style={styles.itemRow}>
               <Text variant="bodySemibold">Total</Text>
               <Text variant="bodySemibold">{format(cartTotal)}</Text>

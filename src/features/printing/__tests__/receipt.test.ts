@@ -188,6 +188,26 @@ describe('receipt layout', () => {
     expect(renderReceiptText(noDiscount, profile58)).not.toContain('Discount');
   });
 
+  it('prints the delivery charge between the food and the payable, only when there is one', () => {
+    const delivery: ReceiptData = {
+      ...receipt,
+      orderTypeLabel: 'Delivery',
+      deliveryAddress: '12 Main Street',
+      deliveryCharge: 150,
+      total: 610,
+    };
+    const text = renderReceiptText(delivery, profile80);
+    expect(text).toContain('Delivery charges');
+    expect(text).toContain('Rs150.00');
+    expect(text.indexOf('Discount')).toBeLessThan(text.indexOf('Delivery charges'));
+    expect(text.indexOf('Delivery charges')).toBeLessThan(text.indexOf('PAYABLE'));
+
+    expect(renderReceiptText({ ...receipt, deliveryCharge: 0 }, profile80)).not.toContain(
+      'Delivery charges',
+    );
+    expect(renderReceiptText(receipt, profile80)).not.toContain('Rider');
+  });
+
   it('omits the tax line when tax is zero, matching the web receipt', () => {
     expect(renderReceiptText(receipt, profile58)).not.toContain('Tax');
     expect(renderReceiptText({ ...receipt, tax: 15 }, profile58)).toContain('Tax');

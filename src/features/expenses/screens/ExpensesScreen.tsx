@@ -24,7 +24,7 @@ import { SkeletonList } from '@/components/ui/Skeleton';
 import { Text } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/Toast';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
-import { isOwner } from '@/lib/access';
+import { canManageExpenseCategories } from '@/lib/access';
 import { localDateKey } from '@/lib/date';
 import { toNumber } from '@/lib/format';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -64,7 +64,7 @@ export function ExpensesScreen() {
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
 
-  const owner = isOwner(user);
+  const owner = canManageExpenseCategories(user);
   const [range, setRange] = useState('month');
   const [formOpen, setFormOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);

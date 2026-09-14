@@ -11,6 +11,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { customersApi } from '@/api/services';
 import { Customer, CustomerPayload } from '@/api/types';
 import { RootStackParamList } from '@/app/navigation/types';
+import { useAuth } from '@/app/providers/AuthProvider';
 import { PageFade } from '@/components/layout/PageFade';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
@@ -29,11 +30,11 @@ import { useTheme } from '@/theme/ThemeProvider';
 import { CustomerFormSheet } from '../components/CustomerFormSheet';
 
 /**
- * Customer directory.
+ * Customer directory — the store's own, scoped server-side.
  *
- * NOTE: GET /customers is not store-scoped on the backend — the controller has
- * no store filtering — so this list spans every store on the platform. Worth
- * fixing server-side; there is nothing the client can do about it safely.
+ * A general store fills it from the POS; a restaurant fills it from delivery
+ * orders, which file their customer by phone. Either way it is edited and
+ * pruned here.
  */
 export function CustomersScreen() {
   const theme = useTheme();
@@ -41,6 +42,9 @@ export function CustomersScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const queryClient = useQueryClient();
   const { format } = useStoreCurrency();
+  const { user } = useAuth();
+  // A restaurant's book is a delivery book: name, phone, address, spend.
+  const isRestaurant = user?.accountType === 'restaurant';
 
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -89,10 +93,12 @@ export function CustomersScreen() {
       (customer) =>
         customer.name.toLowerCase().includes(term) ||
         customer.phone?.toLowerCase().includes(term) ||
-        customer.email?.toLowerCase().includes(term) ||
-        customer.city?.toLowerCase().includes(term),
+        customer.address?.toLowerCase().includes(term) ||
+        (!isRestaurant &&
+          (customer.email?.toLowerCase().includes(term) ||
+            customer.city?.toLowerCase().includes(term))),
     );
-  }, [query.data, debouncedSearch]);
+  }, [query.data, debouncedSearch, isRestaurant]);
 
   return (
     <SafeAreaView
@@ -114,7 +120,7 @@ export function CustomersScreen() {
         <SearchInput
           value={search}
           onChangeText={setSearch}
-          placeholder="Search by name, phone, email or city"
+          placeholder={isRestaurant ? 'Search by name, phone or address' : 'Search by name, phone, address or city'}
         />
       </View>
 
@@ -183,7 +189,12 @@ export function CustomersScreen() {
                     {item.name}
                   </Text>
                   <Text variant="caption" color="mutedForeground" numberOfLines={1}>
-                    {[item.phone, item.city, item.email].filter(Boolean).join(' · ')}
+                    {(isRestaurant
+                      ? [item.phone, item.address]
+                      : [item.phone, item.city, item.email]
+                    )
+                      .filter(Boolean)
+                      .join(' · ')}
                   </Text>
                   <Text
                     variant="smallMedium"

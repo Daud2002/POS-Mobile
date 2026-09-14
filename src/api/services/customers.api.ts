@@ -1,14 +1,18 @@
 import { apiClient, query } from '../client';
-import { Customer, CustomerPayload, Order } from '../types';
+import { Customer, CustomerPayload, CustomerSuggestion, Order } from '../types';
 
 export const customersApi = {
-  /**
-   * NOTE: the backend CustomersController has no store scoping, so this returns
-   * customers across every store. Screens filter client-side until that is
-   * fixed server-side.
-   */
+  /** The store's own customers — the server scopes by the caller's tenant. */
   list(skip = 0, take = 1000) {
     return apiClient.get<Customer[]>(`/customers${query({ skip, take })}`);
+  },
+
+  /**
+   * Live matches on name, phone or address for the order screen. Two
+   * characters minimum — the server returns nothing for less.
+   */
+  suggest(q: string, limit = 8) {
+    return apiClient.get<CustomerSuggestion[]>(`/customers/suggest${query({ q, limit })}`);
   },
 
   getById(id: string) {
