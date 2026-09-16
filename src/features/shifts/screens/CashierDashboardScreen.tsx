@@ -13,6 +13,7 @@ import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { toNumber } from '@/lib/format';
+import { takingsSummary } from '@/lib/payment';
 import { useTheme } from '@/theme';
 import type { CashierShift } from '@/api/types';
 import { ShiftBar } from '../components/ShiftBar';
@@ -156,11 +157,25 @@ export function CashierDashboardScreen() {
               label="Opened"
               value={current.openedAt ? new Date(current.openedAt).toLocaleString() : '—'}
             />
-            <KeyValueRow label="Opening float" value={format(toNumber(current.openingFloat))} />
+            {/*
+              Everything taken, by method, then the drawer arithmetic. Card
+              and online are shown even though they never enter the drawer —
+              the cashier is accountable for the whole shift, and "In drawer
+              now" only makes sense next to the figures it leaves out.
+            */}
             <KeyValueRow label="Cash taken" value={format(toNumber(current.totals?.cashSales))} />
-            <KeyValueRow label="Paid out" value={format(toNumber(current.totals?.cashPaidOut))} />
+            <KeyValueRow label="Card" value={format(toNumber(current.totals?.cardSales))} />
+            <KeyValueRow label="Online" value={format(toNumber(current.totals?.onlineSales))} />
             <KeyValueRow
-              label="In drawer now"
+              label="Total taken"
+              value={format(toNumber(current.totals?.totalSales))}
+              emphasis
+            />
+            <KeyValueRow label="Opening float" value={format(toNumber(current.openingFloat))} />
+            <KeyValueRow label="+ Cash taken" value={format(toNumber(current.totals?.cashSales))} />
+            <KeyValueRow label="− Paid out" value={format(toNumber(current.totals?.cashPaidOut))} />
+            <KeyValueRow
+              label="= In drawer now"
               value={format(toNumber(current.totals?.expectedCash))}
               emphasis
             />
@@ -199,6 +214,13 @@ export function CashierDashboardScreen() {
                       {STATUS_LABEL[shift.status] ?? shift.status} ·{' '}
                       {format(toNumber(shift.totalSales))} · {shift.orderCount ?? 0} orders
                     </Text>
+                    {/* By method, so a shift's card and online takings are
+                        visible without opening it. Absent while still open. */}
+                    {takingsSummary(shift, format) ? (
+                      <Text variant="caption" color="mutedForeground" numberOfLines={1}>
+                        {takingsSummary(shift, format)}
+                      </Text>
+                    ) : null}
                   </View>
                   {diff !== null && diff !== undefined && (
                     <Text variant="smallMedium" style={{ color: diffColor }}>

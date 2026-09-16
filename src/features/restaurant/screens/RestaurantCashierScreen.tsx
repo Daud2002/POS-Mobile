@@ -144,12 +144,20 @@ export function RestaurantCashierScreen() {
   /**
    * Editing the lines of the selected order. Removals are staged per line
    * (how many to take off); additions are their own cart. Nothing is sent
-   * until "Save & reprint".
+   * until "Update order".
    */
   const [editing, setEditing] = useState(false);
   const [removals, setRemovals] = useState<Record<string, number>>({});
   const [additions, setAdditions] = useState<CartLine[]>([]);
   const [saving, setSaving] = useState(false);
+  /**
+   * The lines changed AFTER this till printed the bill, so the paper in the
+   * customer's hand is wrong. Updating and printing are two separate taps —
+   * the update goes to the kitchen at once, the bill prints when the cashier
+   * is ready — and this is what keeps the print button in front of them in
+   * between. Cleared by the next print, or by moving to another order.
+   */
+  const [billStale, setBillStale] = useState(false);
 
   /**
    * The open-drawer gate. Opening and closing a shift lives on the My Shift
@@ -445,6 +453,7 @@ export function RestaurantCashierScreen() {
     setPaymentMethod('cash');
     setSplit(EMPTY_SPLIT_TEXT);
     discardEdits();
+    setBillStale(false);
   };
 
   const closeOrder = () => {
@@ -453,6 +462,7 @@ export function RestaurantCashierScreen() {
     setDeliveryChargeText('');
     setSplit(EMPTY_SPLIT_TEXT);
     discardEdits();
+    setBillStale(false);
   };
 
   const canEdit =
@@ -493,6 +503,7 @@ export function RestaurantCashierScreen() {
       await printPaper(bill);
       toast.success(billPrinted ? 'Bill reprinted' : 'Bill printed — mark it paid once the money is in');
       setSelected(bill);
+      setBillStale(false);
       refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to print the bill');
@@ -514,9 +525,16 @@ export function RestaurantCashierScreen() {
     setRemovals((prev) => ({ ...prev, [item.id]: Math.max((prev[item.id] ?? 0) - 1, 0) }));
 
   /**
-   * Sends the staged edits, then reprints. Additions go first so an order
-   * can have every original line replaced — the server refuses a removal
-   * that would leave nothing, and it sees the additions before it does.
+   * Sends the staged edits — and only the edits. Additions go first so an
+   * order can have every original line replaced: the server refuses a
+   * removal that would leave nothing, and it sees the additions before it
+   * does. The kitchen hears about the change on the spot (a round ticket, or
+   * a cancellation ticket for anything it was still cooking).
+   *
+   * Printing is deliberately NOT part of this. The bill comes out on its own
+   * button, when the cashier asks for it — a waiter's table is often updated
+   * several times before anyone wants paper — so after a successful update
+   * the print button simply takes this button's place.
    *
    * The selected order may be swapped for a fresh copy mid-sequence (each
    * step raises order:updated and the list refetches), which is why the id
@@ -529,7 +547,7 @@ export function RestaurantCashierScreen() {
       return;
     }
     const id = selected.id;
-    const type = selected.orderType;
+    const wasPrinted = !!selected.billPrinted;
     const toAdd = additions.map((l) => ({
       productId: l.productId,
       quantity: l.quantity,
@@ -540,29 +558,31 @@ export function RestaurantCashierScreen() {
       .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
 
     setSaving(true);
-    let persisted = false;
+    let updated: RestaurantOrder | null = null;
     try {
       if (toAdd.length) {
-        await restaurantApi.addItems(id, toAdd);
-        persisted = true;
+        updated = await restaurantApi.addItems(id, toAdd);
       }
       if (toRemove.length) {
-        await restaurantApi.removeItems(id, toRemove);
-        persisted = true;
+        updated = await restaurantApi.removeItems(id, toRemove);
       }
-      const bill = await restaurantApi.printBill(id, billFigures(type));
       discardEdits();
-      setSelected(bill);
+      if (updated) setSelected(updated);
+      // This till keeps its claim through its own edit, so the order still
+      // reads "bill printed" — but the paper no longer matches it.
+      setBillStale(wasPrinted);
       refresh();
-      await printPaper(bill);
-      toast.success('Order updated — bill reprinted');
+      toast.success(
+        wasPrinted
+          ? 'Order updated — reprint the bill when you are ready'
+          : 'Order updated — print the bill when you are ready',
+      );
     } catch (error: any) {
-      if (persisted) {
-        // The order changed on the server; only the paper is missing.
-        toast.error(
-          `Changes saved, but the bill did not reprint: ${error?.message ?? 'unknown error'}. Tap Reprint bill.`,
-        );
+      if (updated) {
+        // The additions landed; only the removals did not.
+        toast.error(`Dishes were added, but not removed: ${error?.message ?? 'unknown error'}`);
         discardEdits();
+        setBillStale(wasPrinted);
         refresh();
       } else {
         toast.error(error?.message ?? 'Failed to update the order');
@@ -815,13 +835,18 @@ export function RestaurantCashierScreen() {
         footer={
           selected ? (
             editing ? (
+              /*
+                Update, not print: the change goes to the kitchen now, and once
+                it has landed the print button stands in this exact spot for
+                the cashier's next tap.
+              */
               <View style={{ flex: 1, gap: theme.spacing.sm }}>
                 <Button
                   onPress={saveEdits}
                   loading={saving}
                   disabled={!hasItemChanges}
                   icon={<Save size={16} color={theme.colors.primaryForeground} />}
-                  label="Save & reprint bill"
+                  label="Update order"
                 />
                 <Button
                   variant="outline"
@@ -834,18 +859,24 @@ export function RestaurantCashierScreen() {
             ) : (
               /*
                 Print (or reprint) first — the customer gets the paper; then
-                Mark as paid, once the money is actually in the drawer.
+                Mark as paid, once the money is actually in the drawer. A
+                reprint after this till's own update is the primary action
+                again: the customer's copy is wrong until it happens.
               */
               <View style={{ flex: 1, gap: theme.spacing.sm }}>
                 <Button
-                  variant={billPrinted ? 'outline' : 'primary'}
+                  variant={billPrinted && !billStale ? 'outline' : 'primary'}
                   onPress={printBill}
                   loading={printing}
                   disabled={settling || selected.orderStatus === 'draft'}
                   icon={
                     <Printer
                       size={16}
-                      color={billPrinted ? theme.colors.foreground : theme.colors.primaryForeground}
+                      color={
+                        billPrinted && !billStale
+                          ? theme.colors.foreground
+                          : theme.colors.primaryForeground
+                      }
                     />
                   }
                   label={billPrinted ? 'Reprint bill' : 'Print bill'}
@@ -887,8 +918,24 @@ export function RestaurantCashierScreen() {
       >
         {selected && (
           <>
+            {/* The paper is out of date: this till changed the lines after
+                printing it. Reprint before the customer pays. */}
+            {billPrinted && billStale && !editing && (
+              <View
+                style={[
+                  styles.notice,
+                  { backgroundColor: tint(theme.colors.warning, 0.12), borderRadius: theme.radius.md },
+                ]}
+              >
+                <Printer size={16} color={theme.colors.warning} />
+                <Text variant="caption" style={{ flex: 1 }}>
+                  Order updated since the bill was printed — reprint it so the customer's copy
+                  matches.
+                </Text>
+              </View>
+            )}
             {/* The claim, spelled out: this bill is now this till's. */}
-            {billPrinted && !editing && (
+            {billPrinted && !billStale && !editing && (
               <View
                 style={[
                   styles.notice,
@@ -913,7 +960,7 @@ export function RestaurantCashierScreen() {
                 <Pencil size={16} color={theme.colors.warning} />
                 <Text variant="caption" style={{ flex: 1 }}>
                   Editing. Use − to strike lines off and pick dishes below to add them. Nothing
-                  changes until you save, and the bill reprints when you do.
+                  changes until you tap Update; the bill prints separately afterwards.
                 </Text>
               </View>
             )}

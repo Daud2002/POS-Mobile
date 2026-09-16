@@ -1,10 +1,20 @@
 import { useCallback, useState } from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
+import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, DollarSign, Percent, ShoppingCart, TrendingUp, Wallet } from 'lucide-react-native';
+import {
+  AlertTriangle,
+  DollarSign,
+  Package,
+  Percent,
+  PiggyBank,
+  ShoppingCart,
+  TrendingUp,
+  Wallet,
+} from 'lucide-react-native';
 
-import { expensesApi, restaurantApi } from '@/api/services';
+import { reportsApi, restaurantApi } from '@/api/services';
+import type { ProfitPeriodKey } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
@@ -14,25 +24,16 @@ import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { can, canSeeShifts } from '@/lib/access';
-import { localDateKey } from '@/lib/date';
-import { ProfitSection } from '@/features/dashboard/components/ProfitSection';
+import { deviceTimeZone } from '@/lib/date';
+import { PROFIT_PERIODS, periodStart } from '@/lib/periods';
 import { tint, useTheme } from '@/theme';
 
-const RANGES = [
-  { key: 'today', label: 'Today' },
-  { key: '7d', label: '7 days' },
-  { key: '30d', label: '30 days' },
-  { key: 'all', label: 'All' },
-] as const;
+type Tone = 'positive' | 'negative' | 'neutral';
 
-function rangeStart(key: string): string | undefined {
-  const now = new Date();
-  if (key === 'today') {
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  }
-  if (key === '7d') return new Date(now.getTime() - 7 * 864e5).toISOString();
-  if (key === '30d') return new Date(now.getTime() - 30 * 864e5).toISOString();
-  return undefined;
+/** A profit reads green, a loss red; nothing at all stays neutral. */
+function toneOf(value: number | null | undefined): Tone {
+  if (value === null || value === undefined || value === 0) return 'neutral';
+  return value < 0 ? 'negative' : 'positive';
 }
 
 export function RestaurantDashboardScreen() {
@@ -41,26 +42,25 @@ export function RestaurantDashboardScreen() {
   const { user } = useAuth();
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<string>('today');
-
-  const reportQuery = useQuery({
-    queryKey: queryKeys.restaurantReport(range),
-    queryFn: () => restaurantApi.salesReport(rangeStart(range)),
-  });
+  const [period, setPeriod] = useState<ProfitPeriodKey>('today');
 
   /**
-   * Today's spend. Deliberately not tied to the range picker above — the owner
-   * wants today's outgoings whichever sales window they are looking at.
-   *
-   * The day key comes from the DEVICE, so "today" is the user's calendar day
-   * rather than the API server's timezone.
+   * One period picker drives every figure at the top. Sales, cost, gross
+   * profit, orders and discounts come from the sales report, windowed from
+   * `periodStart`; expenses and net profit come from the profit report, which
+   * computes the same six windows server-side in the device's zone. Both
+   * apply the same "money taken" rule, so the two never disagree.
    */
-  const today = localDateKey(new Date());
+  const reportQuery = useQuery({
+    queryKey: queryKeys.restaurantReport(period),
+    queryFn: () => restaurantApi.salesReport(periodStart(period)),
+  });
+
   const canSeeExpenses = can(user, 'expenses');
-  const expensesQuery = useQuery({
-    queryKey: queryKeys.expenseSummary(today),
-    queryFn: () => expensesApi.summary(today),
-    enabled: canSeeExpenses,
+  const tz = deviceTimeZone();
+  const profitQuery = useQuery({
+    queryKey: queryKeys.profitReport(tz),
+    queryFn: () => reportsApi.profit(tz),
   });
 
   const refresh = useCallback(() => {
@@ -75,6 +75,7 @@ export function RestaurantDashboardScreen() {
   useRealtime({ events: [RealtimeEvents.orderUpdated], onChange: refresh });
 
   const report = reportQuery.data;
+  const spend = profitQuery.data?.periods[period];
   const margin = report && report.revenue > 0 ? (report.profit / report.revenue) * 100 : 0;
 
   return (
@@ -82,59 +83,102 @@ export function RestaurantDashboardScreen() {
       <View style={{ gap: 14 }}>
         <Text variant="h2">Dashboard</Text>
 
-        <View style={styles.rangeRow}>
-          {RANGES.map((r) => (
-            <Pressable
-              key={r.key}
-              onPress={() => setRange(r.key)}
-              style={[
-                styles.rangeBtn,
-                {
-                  borderRadius: theme.radius.full,
-                  borderColor: range === r.key ? theme.colors.primary : theme.colors.border,
-                  backgroundColor:
-                    range === r.key ? tint(theme.colors.primary, 0.1) : 'transparent',
-                },
-              ]}
-            >
-              <Text variant="caption">{r.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+        {/*
+          The period filter. Horizontal scroll rather than wrapping: six pills
+          do not fit a phone's width, and a second row would push the figures
+          below the fold.
+        */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.pills}
+        >
+          {PROFIT_PERIODS.map(({ key, label }) => {
+            const active = period === key;
+            return (
+              <Pressable
+                key={key}
+                onPress={() => setPeriod(key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={[
+                  styles.pill,
+                  {
+                    borderRadius: theme.radius.full,
+                    borderColor: active ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: active ? tint(theme.colors.primary, 0.1) : 'transparent',
+                  },
+                ]}
+              >
+                <Text variant={active ? 'smallMedium' : 'small'}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
 
+        {/*
+          The whole picture for one window, swiped left to right like a P&L:
+          revenue − cost of goods = gross profit; gross − expenses = net.
+          Orders and discounts follow as context. Expenses and net sit behind
+          the expenses module, so staff given the dashboard but not expenses
+          never see the store's outgoings — nor net, which would reveal them
+          by arithmetic.
+        */}
         <StatRow>
           <StatCard
             title="Revenue"
             value={format(report?.revenue ?? 0)}
             icon={<DollarSign size={18} color={theme.colors.primary} />}
+            loading={reportQuery.isLoading}
           />
           <StatCard
-            title="Profit"
+            title="Cost of goods"
+            value={format(report?.cost ?? 0)}
+            icon={<Package size={18} color={theme.colors.info} />}
+            tone="info"
+            loading={reportQuery.isLoading}
+          />
+          <StatCard
+            title="Gross profit"
             value={format(report?.profit ?? 0)}
             subtitle={`${margin.toFixed(1)}% margin`}
+            valueTone={toneOf(report?.profit)}
             icon={<TrendingUp size={18} color={theme.colors.success} />}
+            loading={reportQuery.isLoading}
           />
+          {canSeeExpenses ? (
+            <StatCard
+              title="Expenses"
+              value={spend ? format(spend.expenses ?? 0) : '—'}
+              icon={<Wallet size={18} color={theme.colors.destructive} />}
+              tone="destructive"
+              loading={profitQuery.isLoading}
+            />
+          ) : null}
+          {canSeeExpenses ? (
+            <StatCard
+              title="Net profit"
+              subtitle="after expenses"
+              value={spend?.netProfit === null || spend?.netProfit === undefined ? '—' : format(spend.netProfit)}
+              valueTone={toneOf(spend?.netProfit)}
+              icon={<PiggyBank size={18} color={theme.colors.success} />}
+              loading={profitQuery.isLoading}
+            />
+          ) : null}
           <StatCard
             title="Orders"
             value={String(report?.orderCount ?? 0)}
             icon={<ShoppingCart size={18} color={theme.colors.info} />}
+            tone="info"
+            loading={reportQuery.isLoading}
           />
           <StatCard
             title="Discounts"
             value={format(report?.discountTotal ?? 0)}
             icon={<Percent size={18} color={theme.colors.warning} />}
+            tone="warning"
+            loading={reportQuery.isLoading}
           />
-          {/* Behind the expenses module: staff given the dashboard but not
-              expenses never see the store's outgoings. */}
-          {canSeeExpenses ? (
-            <StatCard
-              title="Expenses today"
-              value={format(expensesQuery.data?.today ?? 0)}
-              subtitle={`${format(expensesQuery.data?.month ?? 0)} this month`}
-              icon={<Wallet size={18} color={theme.colors.destructive} />}
-              loading={expensesQuery.isLoading}
-            />
-          ) : null}
         </StatRow>
 
         {/*
@@ -160,8 +204,6 @@ export function RestaurantDashboardScreen() {
             </Text>
           </View>
         )}
-
-        <ProfitSection showExpenses={canSeeExpenses} />
 
         <SectionCard title="Top dishes">
           {report?.topProducts?.length ? (
@@ -232,8 +274,8 @@ export function RestaurantDashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  rangeRow: { flexDirection: 'row', gap: 8 },
-  rangeBtn: { borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
+  pills: { flexDirection: 'row', gap: 8 },
+  pill: { borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
   warning: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     borderWidth: 1, padding: 12,

@@ -1,46 +1,110 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react-native';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { queryKeys } from '@/api/queryKeys';
 import { reportsApi } from '@/api/services';
 import type { ProfitPeriodKey } from '@/api/types';
 import { SectionCard } from '@/components/data/SectionCard';
-import { SkeletonList } from '@/components/ui/Skeleton';
-import { Divider } from '@/components/ui/Divider';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { Text } from '@/components/ui/Text';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { deviceTimeZone } from '@/lib/date';
+import { PROFIT_PERIODS } from '@/lib/periods';
 import { tint, useTheme } from '@/theme';
-
-const PERIODS: { key: ProfitPeriodKey; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'thisMonth', label: 'This month' },
-  { key: 'last3Months', label: 'Past 3 months' },
-  { key: 'last6Months', label: 'Past 6 months' },
-  { key: 'thisYear', label: 'This year' },
-  { key: 'allTime', label: 'All time' },
-];
 
 interface ProfitSectionProps {
   /**
    * Whether the viewer holds the expenses module. When they do not, the
-   * server sends null for expenses and net, and those show a dash.
+   * server sends null for expenses and net, and those two cards are left out
+   * altogether — the section never reveals the ledger by arithmetic.
    */
   showExpenses: boolean;
 }
 
+type Tone = 'positive' | 'negative' | 'neutral';
+
+/** One figure. `tone` colours a profit red or green; plain figures stay neutral. */
+function FigureCard({
+  label,
+  value,
+  hint,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: Tone;
+}) {
+  const theme = useTheme();
+  const color =
+    tone === 'positive'
+      ? theme.colors.success
+      : tone === 'negative'
+        ? theme.colors.destructive
+        : theme.colors.foreground;
+
+  return (
+    <View
+      style={[
+        styles.figure,
+        {
+          borderColor: theme.colors.border,
+          borderRadius: theme.radius.md,
+          backgroundColor: tint(theme.colors.muted, 0.4),
+        },
+      ]}
+    >
+      <Text variant="caption" color="mutedForeground">
+        {label}
+      </Text>
+      <Text variant="money" style={{ color, marginTop: 4 }} numberOfLines={1}>
+        {value}
+      </Text>
+      {hint ? (
+        <Text variant="caption" color="mutedForeground" numberOfLines={1}>
+          {hint}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function FigureSkeleton() {
+  const theme = useTheme();
+  return (
+    <View
+      style={[
+        styles.figure,
+        { borderColor: theme.colors.border, borderRadius: theme.radius.md, gap: 6 },
+      ]}
+    >
+      <Skeleton width="50%" height={10} />
+      <Skeleton width="80%" height={20} />
+      <Skeleton width="40%" height={10} />
+    </View>
+  );
+}
+
 /**
- * Gross and net profit over the standard windows, for either dashboard.
+ * Gross and net profit for ONE window at a time, as cards, for either
+ * dashboard.
  *
  * Gross = what the goods sold for − what they cost (the cost snapshotted on
  * each line when it was sold). Net = gross − expenses booked in the window.
- * One row per window: the label, then gross and net side by side.
+ * The window is picked from the pills under the title; all six arrive in one
+ * request, so switching is instant and refetches nothing.
+ *
+ * Replaces a six-row table that showed every window at once — nobody reads
+ * six periods side by side; they want one period's figures, large, and a way
+ * to flick between them.
  */
 export function ProfitSection({ showExpenses }: ProfitSectionProps) {
   const theme = useTheme();
   const { format } = useStoreCurrency();
   const tz = deviceTimeZone();
+  const [period, setPeriod] = useState<ProfitPeriodKey>('today');
 
   const query = useQuery({
     queryKey: queryKeys.profitReport(tz),
@@ -48,65 +112,101 @@ export function ProfitSection({ showExpenses }: ProfitSectionProps) {
   });
 
   const report = query.data;
-  const unknownCost = report?.periods.allTime.unknownCostLineCount ?? 0;
+  const row = report?.periods[period];
+  const unknownCost = row?.unknownCostLineCount ?? 0;
 
-  const toneFor = (value: number | null | undefined) => {
-    if (value === null || value === undefined) return theme.colors.mutedForeground;
-    if (value < 0) return theme.colors.destructive;
-    if (value > 0) return theme.colors.success;
-    return theme.colors.foreground;
+  const toneOf = (value: number | null | undefined): Tone => {
+    if (value === null || value === undefined || value === 0) return 'neutral';
+    return value < 0 ? 'negative' : 'positive';
   };
+
+  /** Gross margin as a share of sales, when there were any. */
+  const margin =
+    row && row.revenue > 0
+      ? `${((row.grossProfit / row.revenue) * 100).toFixed(1)}% margin`
+      : undefined;
 
   return (
     <SectionCard title="Profit" subtitle="Gross = sales − cost of goods · Net = gross − expenses">
+      {/*
+        The period filter. Horizontal scroll rather than wrapping: six pills
+        do not fit a phone's width, and a second row would push the figures
+        below the fold. Anything added later (a cashier, an order type) joins
+        this row.
+      */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={[styles.pills, { paddingBottom: theme.spacing.md }]}
+      >
+        {PROFIT_PERIODS.map(({ key, label }) => {
+          const active = period === key;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => setPeriod(key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              style={[
+                styles.pill,
+                {
+                  borderColor: active ? theme.colors.primary : theme.colors.border,
+                  backgroundColor: active ? tint(theme.colors.primary, 0.1) : 'transparent',
+                },
+              ]}
+            >
+              <Text variant={active ? 'smallMedium' : 'small'}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
       {query.isLoading ? (
-        <SkeletonList count={6} lines={1} />
-      ) : !report ? (
+        <View style={styles.grid}>
+          {Array.from({ length: showExpenses ? 5 : 3 }, (_, i) => (
+            <FigureSkeleton key={i} />
+          ))}
+        </View>
+      ) : !row ? (
+        /*
+          The request failed, so there are no figures to show — say so rather
+          than painting a row of zeros that reads as "no sales".
+        */
         <Text variant="caption" color="mutedForeground">
           Profit figures are not available right now.
         </Text>
       ) : (
-        <View>
-          <View style={[styles.row, { paddingBottom: theme.spacing.xs }]}>
-            <Text variant="overline" color="mutedForeground" style={styles.label}>
-              Period
-            </Text>
-            <Text variant="overline" color="mutedForeground" style={styles.cell}>
-              Gross
-            </Text>
-            <Text variant="overline" color="mutedForeground" style={styles.cell}>
-              Net
-            </Text>
-          </View>
-          {PERIODS.map(({ key, label }, index) => {
-            const row = report.periods[key];
-            const net = showExpenses ? row.netProfit : null;
-            return (
-              <View key={key}>
-                {index > 0 ? <Divider /> : null}
-                <View style={[styles.row, { paddingVertical: theme.spacing.sm }]}>
-                  <View style={styles.label}>
-                    <Text variant="smallMedium">{label}</Text>
-                    <Text variant="caption" color="mutedForeground">
-                      {row.orderCount} order{row.orderCount === 1 ? '' : 's'} · {format(row.revenue)}
-                    </Text>
-                  </View>
-                  <Text variant="money" style={[styles.cell, { color: toneFor(row.grossProfit) }]}>
-                    {format(row.grossProfit)}
-                  </Text>
-                  <Text variant="money" style={[styles.cell, { color: toneFor(net) }]}>
-                    {net === null || net === undefined ? '—' : format(net)}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
+        <View style={styles.grid}>
+          <FigureCard
+            label="Sales"
+            value={format(row.revenue)}
+            hint={`${row.orderCount} order${row.orderCount === 1 ? '' : 's'}`}
+          />
+          <FigureCard label="Cost of goods" value={format(row.cost)} />
+          <FigureCard
+            label="Gross profit"
+            value={format(row.grossProfit)}
+            hint={margin}
+            tone={toneOf(row.grossProfit)}
+          />
+          {showExpenses ? (
+            <>
+              <FigureCard label="Expenses" value={format(row.expenses ?? 0)} />
+              <FigureCard
+                label="Net profit"
+                value={row.netProfit === null ? '—' : format(row.netProfit)}
+                hint="after expenses"
+                tone={toneOf(row.netProfit)}
+              />
+            </>
+          ) : null}
         </View>
       )}
 
       {/*
         Profit is only as good as the cost prices behind it. Rather than show
-        a confidently wrong number, say so when some lines had no cost.
+        a confidently wrong number, say so when some lines in THIS window had
+        no cost.
       */}
       {!query.isLoading && unknownCost > 0 ? (
         <View
@@ -122,8 +222,8 @@ export function ProfitSection({ showExpenses }: ProfitSectionProps) {
         >
           <AlertTriangle size={14} color={theme.colors.warning} />
           <Text variant="caption" style={{ color: theme.colors.warning, flex: 1 }}>
-            {unknownCost} sold item{unknownCost === 1 ? '' : 's'} had no cost price, so profit is
-            overstated. Set a cost on those products to correct it.
+            {unknownCost} sold item{unknownCost === 1 ? '' : 's'} in this period had no cost price,
+            so profit is overstated. Set a cost on those products to correct it.
           </Text>
         </View>
       ) : null}
@@ -132,9 +232,11 @@ export function ProfitSection({ showExpenses }: ProfitSectionProps) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { flex: 1.4 },
-  cell: { flex: 1, textAlign: 'right' },
+  pills: { flexDirection: 'row', gap: 8 },
+  pill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  /** Two per row on a phone; `flexBasis` lets a third squeeze in on a tablet. */
+  figure: { flexGrow: 1, flexBasis: '45%', borderWidth: 1, padding: 12 },
   warning: {
     flexDirection: 'row',
     alignItems: 'flex-start',

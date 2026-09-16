@@ -58,7 +58,7 @@ function OrderHistory({ orderId, format }: { orderId: string; format: (n: number
         </Text>
       ) : events.length === 0 ? (
         <Text variant="caption" color="mutedForeground">
-          No history recorded — this order predates change tracking.
+          No history recorded for this order.
         </Text>
       ) : (
         events.map((event) =>

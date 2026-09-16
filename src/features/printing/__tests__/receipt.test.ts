@@ -1,6 +1,11 @@
 import { calculateOrderTotals } from '@/lib/orderMath';
 
-import { buildReceipt, ReceiptData, renderReceiptText } from '../templates/receipt.template';
+import {
+  buildReceipt,
+  frameMargin,
+  ReceiptData,
+  renderReceiptText,
+} from '../templates/receipt.template';
 import { DEFAULT_PRINTER_PROFILE, PrinterProfile } from '../types';
 
 const profile80: PrinterProfile = { ...DEFAULT_PRINTER_PROFILE };
@@ -105,35 +110,58 @@ describe('receipt layout', () => {
     // Only the numeric half of ORD-<epoch> is displayed, as on web.
     expect(text).toContain('1717257600000');
     expect(text).toContain('Customer Copy');
-    expect(text).toContain('Order Number:');
-    expect(text).toContain('Served by: Store Owner');
+    expect(text).toContain('Order No:');
+    expect(text).toContain('by: Store Owner');
+    expect(text).not.toContain('Served by');
     expect(text).toContain('Coca Cola');
     expect(text).toContain('Items:');
     expect(text).toContain('PAYABLE');
-    expect(text).toContain('Thank you for visiting!');
+    expect(text).not.toContain('Thank you');
     expect(text).toContain('tapntrade.store');
   });
 
   /**
+   * "Order No: 42 … Customer Copy" is ONE row: the number straight after its
+   * label, the copy label at the right edge — as on the web receipt.
+   */
+  it('prints the order number and Customer Copy on the same row', () => {
+    const restaurant: ReceiptData = { ...receipt, invoiceNumber: '#42', orderTypeLabel: 'Dine-in' };
+    const row = lines(restaurant, profile80).find((l) => l.includes('Order No:'));
+    expect(row).toBeDefined();
+    expect(row).toContain('Order No: 42');
+    expect(row!.trimEnd().endsWith('Customer Copy ' + String.fromCharCode(0xb3))).toBe(true);
+  });
+
+  it('pushes the server to the right edge of the order-type row', () => {
+    const restaurant: ReceiptData = { ...receipt, invoiceNumber: '#42', orderTypeLabel: 'Dine-in' };
+    const row = lines(restaurant, profile80).find((l) => l.includes('Dine-in'));
+    expect(row!.trimEnd().endsWith('by: Store Owner ' + String.fromCharCode(0xb3))).toBe(true);
+  });
+
+  /**
    * The frame is the whole point of the layout: one row a column too wide and
-   * the border visibly zigzags down the paper.
+   * the border visibly zigzags down the paper. It sits inside the paper, after
+   * a margin of blank columns, so a framed row is the margin plus the frame.
    *
    * Measured from the BYTES, not the decoded text: a character printed after
    * `GS ! 0x11` is double width and occupies two columns, so the big PAYABLE
    * figure is 8 characters but 16 columns. Counting string length would call a
    * correctly-aligned row broken.
    */
-  it('draws a closed frame on both paper widths', () => {
+  it('draws a closed frame, inset from the edge, on both paper widths', () => {
     for (const [profile, width] of [
       [profile58, 32],
       [profile80, 48],
     ] as const) {
+      const margin = frameMargin(width);
       const rows = printedRows(buildReceipt(receipt, profile));
-      const framed = rows.filter((r) => FRAME_STARTS.includes(r.text[0]));
+      const framed = rows.filter((r) => FRAME_STARTS.includes(r.text.trimStart()[0]));
 
       expect(framed.length).toBeGreaterThan(8);
       for (const row of framed) {
-        expect([row.text, row.columns]).toEqual([row.text, width]);
+        expect(row.text.startsWith(' '.repeat(margin))).toBe(true);
+        expect(row.text[margin]).not.toBe(' ');
+        expect([row.text, row.columns]).toEqual([row.text, width - margin]);
         expect(FRAME_ENDS.includes(row.text[row.text.length - 1])).toBe(true);
       }
     }
@@ -158,16 +186,16 @@ describe('receipt layout', () => {
 
     // And a long address must wrap inside the frame, not burst it.
     const rows = printedRows(buildReceipt(delivery, profile58)).filter((r) =>
-      FRAME_STARTS.includes(r.text[0]),
+      FRAME_STARTS.includes(r.text.trimStart()[0]),
     );
     for (const row of rows) {
-      expect([row.text, row.columns]).toEqual([row.text, 32]);
+      expect([row.text, row.columns]).toEqual([row.text, 32 - frameMargin(32)]);
     }
   });
 
   it('heads the item table', () => {
     const wide = renderReceiptText(receipt, profile80);
-    expect(wide).toContain('Item Description');
+    expect(wide).toContain('Item');
     expect(wide).toContain('Rate');
 
     // 58mm drops the rate column so the dish name keeps usable width.

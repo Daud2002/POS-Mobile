@@ -103,33 +103,44 @@ interface FrameColumn {
 }
 
 /**
- * Item-table columns, sized so the vertical rules fit the paper exactly.
+ * Blank columns either side of the frame, so the border sits inside the paper
+ * rather than running edge to edge. Two on 80mm; the 58mm roll can spare only
+ * one without losing a table column. Matches the web receipt.
+ */
+export function frameMargin(charsPerLine: number): number {
+  return charsPerLine >= 48 ? 2 : 1;
+}
+
+/**
+ * Item-table columns, sized to the FRAME (the paper less its margins) so the
+ * vertical rules fit exactly; the item name takes whatever the fixed number
+ * columns leave.
  *
- * 58mm paper DROPS the unit-rate column. Squeezing five columns into 32
- * characters leaves the dish name 8 characters and abbreviates the headings to
+ * 58mm paper DROPS the unit-rate column. Squeezing five columns into 30
+ * characters leaves the dish name 7 characters and abbreviates the headings to
  * "Rat" and "Amo" — unreadable. The rate is derivable from qty and amount,
  * whereas a mangled dish name is simply lost, so the name wins the space.
  */
-function itemColumns(charsPerLine: number): { cols: FrameColumn[]; showRate: boolean } {
-  if (charsPerLine >= 48) {
-    // 80 mm: No(3) Item(18) Qty(6) Rate(7) Amount(8) + 6 rules = 48
+function itemColumns(frame: number): { cols: FrameColumn[]; showRate: boolean } {
+  if (frame >= 40) {
+    // 80 mm, 44 wide: No(3) Item(16) Qty(4) Rate(7) Amount(8) + 6 rules = 44
     return {
       showRate: true,
       cols: [
         { width: 3 },
-        { width: 18 },
-        { width: 6, align: 'right' },
+        { width: frame - 28 },
+        { width: 4, align: 'right' },
         { width: 7, align: 'right' },
         { width: 8, align: 'right' },
       ],
     };
   }
-  // 58 mm: No(3) Item(13) Qty(4) Amount(7) + 5 rules = 32
+  // 58 mm, 30 wide: No(3) Item(11) Qty(4) Amount(7) + 5 rules = 30
   return {
     showRate: false,
     cols: [
       { width: 3 },
-      { width: 13 },
+      { width: frame - 19 },
       { width: 4, align: 'right' },
       { width: 7, align: 'right' },
     ],
@@ -208,9 +219,15 @@ function framedSplit(width: number, left: string, right: string): string[] {
   return [framed(width, left), framedRight(width, right)];
 }
 
-/** Writes however many rows a split needed. */
-function writeSplit(builder: EscPosBuilder, width: number, left: string, right: string): void {
-  for (const line of framedSplit(width, left, right)) builder.line(line);
+/** Writes however many rows a split needed, each inset by the frame margin. */
+function writeSplit(
+  builder: EscPosBuilder,
+  pad: string,
+  width: number,
+  left: string,
+  right: string,
+): void {
+  for (const line of framedSplit(width, left, right)) builder.line(pad + line);
 }
 
 /**
@@ -220,19 +237,66 @@ function writeSplit(builder: EscPosBuilder, width: number, left: string, right: 
  */
 function writeBig(
   builder: EscPosBuilder,
+  pad: string,
   width: number,
   left: string,
   big: string,
 ): void {
   const room = width - 2;
   if (left.length + big.length * 2 + 3 > room) {
-    writeSplit(builder, width, left, big);
+    writeSplit(builder, pad, width, left, big);
     return;
   }
   const gap = room - left.length - big.length * 2 - 2;
-  builder.text(V_RULE + ' ' + left + ' '.repeat(gap));
+  builder.text(pad + V_RULE + ' ' + left + ' '.repeat(gap));
   builder.bold(true).size(2, 2).text(big).size(1, 1).bold(false);
   builder.line(' ' + V_RULE);
+}
+
+/**
+ * The row the customer is called by: "Order No: 42 … Customer Copy", the
+ * number bold and double size, the copy label pushed to the right edge.
+ *
+ * Degrades in steps rather than bursting the frame: the number drops to
+ * normal size when it cannot fit doubled, and the three parts stack when even
+ * that is too wide — a retail order's 13-digit number on 58mm paper hits
+ * this. Emphasis is worth losing; the border is not.
+ */
+function writeOrderRow(
+  builder: EscPosBuilder,
+  pad: string,
+  width: number,
+  label: string,
+  big: string,
+  right: string,
+): void {
+  const room = width - 2;
+  const doubledGap = room - label.length - big.length * 2 - right.length - 2;
+  if (doubledGap >= 2) {
+    builder.text(pad + V_RULE + ' ' + label);
+    builder.bold(true).size(2, 2).text(big).size(1, 1).bold(false);
+    builder.line(' '.repeat(doubledGap) + right + ' ' + V_RULE);
+    return;
+  }
+  const gap = room - label.length - big.length - right.length - 2;
+  if (gap >= 1) {
+    builder.text(pad + V_RULE + ' ' + label);
+    builder.bold(true).text(big).bold(false);
+    builder.line(' '.repeat(gap) + right + ' ' + V_RULE);
+    return;
+  }
+  // "Order No: 129" on its own row, the copy label under it at the right edge.
+  const fill = room - 1 - label.length - big.length;
+  if (fill >= 0) {
+    builder.text(pad + V_RULE + ' ' + label);
+    builder.bold(true).text(big).bold(false);
+    builder.line(' '.repeat(fill) + V_RULE);
+    builder.line(pad + framedRight(width, right));
+    return;
+  }
+  builder.line(pad + framed(width, label.trimEnd()));
+  builder.line(pad + framedRight(width, big));
+  builder.line(pad + framedRight(width, right));
 }
 
 const MONTHS = [
@@ -287,7 +351,13 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
   });
 
   const width = profile.charsPerLine;
-  const { cols, showRate } = itemColumns(width);
+  // The frame is narrower than the paper and indented so it sits centred,
+  // with a clear strip either side of the border.
+  const margin = frameMargin(width);
+  const frame = width - margin * 2;
+  const pad = ' '.repeat(margin);
+  const put = (line: string) => builder.line(pad + line);
+  const { cols, showRate } = itemColumns(frame);
   const money = (amount: number) => formatCurrency(amount, data.currency);
 
   builder.init();
@@ -308,31 +378,47 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
   }
 
   builder.align('left');
-  builder.line(boxRule(width, { edge: 'top' }));
+  put(boxRule(frame, { edge: 'top' }));
 
-  // --- Invoice number and when ---------------------------------------------
-  writeSplit(builder, width, orderNumberLabel(data.invoiceNumber), receiptStamp(data.date));
-  builder.line(boxRule(width));
+  // --- When -----------------------------------------------------------------
+  // The invoice string is not printed on its own: the customer is called by
+  // the order number below, and the ORD-<epoch> prefix only added noise.
+  put(framed(frame, `Date: ${receiptStamp(data.date)}`));
+  put(boxRule(frame));
 
   // --- The number the customer is called by, printed big --------------------
-  builder.line(framed(width, 'Customer Copy'));
-
-  writeBig(builder, width, 'Order Number:', String(data.invoiceNumber ?? '').replace(/^#/, ''));
-
-  builder.line(boxRule(width));
+  writeOrderRow(
+    builder,
+    pad,
+    frame,
+    'Order No: ',
+    orderNumberLabel(data.invoiceNumber).replace(/^#/, ''),
+    'Customer Copy',
+  );
+  put(boxRule(frame));
 
   // --- Where it is going ----------------------------------------------------
-  if (data.orderTypeLabel) builder.line(framed(width, data.orderTypeLabel));
-  if (data.tableName || data.customerName || data.dispatchedBy) {
+  // "Takeaway              by: Ali": the server sits at the right edge of the
+  // order-type row, and drops to the table row only when there is no order
+  // type for it to share a row with.
+  const by = data.dispatchedBy ? `by: ${data.dispatchedBy}` : '';
+  let byShown = false;
+  if (data.orderTypeLabel) {
+    writeSplit(builder, pad, frame, data.orderTypeLabel, by);
+    byShown = Boolean(by);
+  }
+  const trailing = byShown ? '' : by;
+  if (data.tableName || data.customerName || trailing) {
     writeSplit(
       builder,
-      width,
+      pad,
+      frame,
       data.tableName ? `Table No: ${data.tableName}` : (data.customerName || 'Walk-in'),
-      data.dispatchedBy ? `Served by: ${data.dispatchedBy}` : '',
+      trailing,
     );
   }
   if (data.tableName && data.customerName) {
-    builder.line(framed(width, data.customerName));
+    put(framed(frame, data.customerName));
   }
   /**
    * Delivery details, on the bill itself: the rider works from this paper, so
@@ -340,25 +426,22 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
    * them is only half a document.
    */
   if (data.customerPhone) {
-    builder.line(framed(width, `Phone: ${data.customerPhone}`));
+    put(framed(frame, `Phone: ${data.customerPhone}`));
   }
   if (data.deliveryAddress) {
-    for (const line of wrapName(`Deliver to: ${data.deliveryAddress}`, width - 4)) {
-      builder.line(framed(width, line));
+    for (const line of wrapName(`Deliver to: ${data.deliveryAddress}`, frame - 4)) {
+      put(framed(frame, line));
     }
   }
 
   // --- Items ----------------------------------------------------------------
-  builder.line(boxRule(width, { below: cols }));
-  builder.bold(true).line(
-    tableRow(
-      cols,
-      showRate
-        ? ['No', 'Item Description', 'Qty', 'Rate', 'Amount']
-        : ['No', 'Item Description', 'Qty', 'Amount'],
-    ),
-  );
-  builder.bold(false).line(boxRule(width, { above: cols, below: cols }));
+  put(boxRule(frame, { below: cols }));
+  // "Item", not "Item Description": the inset frame leaves the name column
+  // too narrow for the long heading, and a clipped heading looks broken.
+  builder.bold(true);
+  put(tableRow(cols, showRate ? ['No', 'Item', 'Qty', 'Rate', 'Amount'] : ['No', 'Item', 'Qty', 'Amount']));
+  builder.bold(false);
+  put(boxRule(frame, { above: cols, below: cols }));
 
   let count = 0;
   data.items.forEach((item, index) => {
@@ -369,7 +452,7 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
     // being truncated the way the old layout did.
     const [first, ...rest] = wrapName(item.name, cols[1].width - 1);
 
-    builder.line(
+    put(
       tableRow(
         cols,
         showRate
@@ -378,59 +461,58 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
       ),
     );
     for (const continuation of rest) {
-      builder.line(tableRow(cols, ['', continuation]));
+      put(tableRow(cols, ['', continuation]));
     }
     // So the customer can see which of their items were packed to go.
-    if (item.isParcel) builder.line(tableRow(cols, ['', '(parcel)']));
+    if (item.isParcel) put(tableRow(cols, ['', '(parcel)']));
     if (item.discount > 0) {
       const discountRow = showRate
         ? ['', 'less discount', '', '', `-${plain(item.discount)}`]
         : ['', 'less discount', '', `-${plain(item.discount)}`];
-      builder.line(tableRow(cols, discountRow));
+      put(tableRow(cols, discountRow));
     }
   });
 
-  builder.line(boxRule(width, { above: cols }));
+  put(boxRule(frame, { above: cols }));
 
   // --- Totals ---------------------------------------------------------------
-  writeSplit(builder, width, `Items: ${count}`, money(data.rawSubtotal));
+  writeSplit(builder, pad, frame, `Items: ${count}`, money(data.rawSubtotal));
 
   if (data.totalDiscount > 0) {
-    writeSplit(builder, width, 'Discount', `- ${money(data.totalDiscount)}`);
+    writeSplit(builder, pad, frame, 'Discount', `- ${money(data.totalDiscount)}`);
   }
 
   // The charge sits between the food and the payable so the customer can see
   // it is on top of the discounted order, not hidden inside it.
   if (Number(data.deliveryCharge) > 0) {
-    writeSplit(builder, width, 'Delivery charges', money(Number(data.deliveryCharge)));
+    writeSplit(builder, pad, frame, 'Delivery charges', money(Number(data.deliveryCharge)));
   }
 
   // Tax is 0 on web (the 8% line is commented out) and is never printed there.
   // Printing it only when non-zero keeps parity while supporting real tax.
   if (data.tax > 0) {
-    writeSplit(builder, width, 'Tax', money(data.tax));
+    writeSplit(builder, pad, frame, 'Tax', money(data.tax));
   }
 
-  builder.line(boxRule(width));
+  put(boxRule(frame));
 
-  writeBig(builder, width, 'PAYABLE', money(data.total));
+  writeBig(builder, pad, frame, 'PAYABLE', money(data.total));
 
   if (data.paymentParts?.length) {
     // Each part on its own line, so the paper says how the money arrived.
-    builder.line(boxRule(width));
-    builder.line(framed(width, 'Paid by:'));
+    put(boxRule(frame));
+    put(framed(frame, 'Paid by:'));
     for (const part of data.paymentParts) {
-      writeSplit(builder, width, `  ${part.label}`, money(part.amount));
+      writeSplit(builder, pad, frame, `  ${part.label}`, money(part.amount));
     }
   } else if (data.paymentMethod) {
-    builder.line(boxRule(width));
-    builder.line(framed(width, `Paid by: ${data.paymentMethod.toUpperCase()}`));
+    put(boxRule(frame));
+    put(framed(frame, `Paid by: ${data.paymentMethod.toUpperCase()}`));
   }
-  builder.line(boxRule(width, { edge: 'bottom' }));
+  put(boxRule(frame, { edge: 'bottom' }));
 
   // --- Footer ---------------------------------------------------------------
   builder.newline().align('center');
-  builder.bold(true).line('Thank you for visiting!').bold(false);
   builder.line('tapntrade.store');
   builder.align('left');
 

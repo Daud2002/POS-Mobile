@@ -89,3 +89,25 @@ export function paymentSummary(
   const parts = paymentParts(order).map((p) => `${p.label} ${money(p.amount)}`);
   return parts.length ? parts.join(' · ') : 'Split';
 }
+
+/**
+ * A shift's takings by method, for a list row: "Cash Rs600 · Card Rs250 ·
+ * Online Rs280". Every method is listed, zeros included — a shift that took
+ * nothing by card is worth seeing as much as one that did, and a fixed shape
+ * lets the eye run down a list. Null when the shift has no figures yet: an
+ * open shift's totals are only frozen onto its row when it closes.
+ */
+export function takingsSummary(
+  shift: { cashSales?: unknown; cardSales?: unknown; onlineSales?: unknown },
+  money: (amount: number) => string,
+): string | null {
+  const figures: Record<SplitMethod, unknown> = {
+    cash: shift.cashSales,
+    card: shift.cardSales,
+    online: shift.onlineSales,
+  };
+  if (SPLIT_METHODS.every((m) => figures[m] === null || figures[m] === undefined)) return null;
+  return SPLIT_METHODS.map((m) => `${paymentMethodLabel(m)} ${money(toNumber(figures[m] as never))}`).join(
+    ' · ',
+  );
+}

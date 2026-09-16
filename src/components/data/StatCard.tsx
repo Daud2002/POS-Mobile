@@ -15,6 +15,8 @@ interface StatCardProps {
   icon: ReactNode;
   /** Icon chip color. Varying tones across a stat row keeps it scannable. */
   tone?: StatTone;
+  /** Colours the figure itself: a profit reads green, a loss red. Plain figures stay neutral. */
+  valueTone?: 'positive' | 'negative' | 'neutral';
   trend?: { value: string; positive: boolean };
   loading?: boolean;
 }
@@ -30,11 +32,18 @@ export function StatCard({
   subtitle,
   icon,
   tone = 'primary',
+  valueTone = 'neutral',
   trend,
   loading = false,
 }: StatCardProps) {
   const theme = useTheme();
   const toneColor = theme.colors[tone];
+  const valueColor =
+    valueTone === 'positive'
+      ? theme.colors.success
+      : valueTone === 'negative'
+        ? theme.colors.destructive
+        : theme.colors.foreground;
 
   return (
     <Card padding="lg" style={styles.card}>
@@ -78,7 +87,11 @@ export function StatCard({
       {loading ? (
         <Skeleton width="70%" height={26} style={{ marginTop: theme.spacing.md }} />
       ) : (
-        <Text variant="display" style={{ marginTop: theme.spacing.md }} numberOfLines={1}>
+        <Text
+          variant="display"
+          style={{ marginTop: theme.spacing.md, color: valueColor }}
+          numberOfLines={1}
+        >
           {value}
         </Text>
       )}
