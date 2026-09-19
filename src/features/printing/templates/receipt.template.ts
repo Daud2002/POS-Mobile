@@ -257,6 +257,10 @@ function writeBig(
  * The row the customer is called by: "Order No: 42 … Customer Copy", the
  * number bold and double size, the copy label pushed to the right edge.
  *
+ * The label is printed double HEIGHT so it stands as tall as the number —
+ * a normal-height label beside it read as a small caption — but not double
+ * width, which would cost the row ten columns it does not have.
+ *
  * Degrades in steps rather than bursting the frame: the number drops to
  * normal size when it cannot fit doubled, and the three parts stack when even
  * that is too wide — a retail order's 13-digit number on 58mm paper hits
@@ -273,7 +277,8 @@ function writeOrderRow(
   const room = width - 2;
   const doubledGap = room - label.length - big.length * 2 - right.length - 2;
   if (doubledGap >= 2) {
-    builder.text(pad + V_RULE + ' ' + label);
+    builder.text(pad + V_RULE + ' ');
+    builder.size(1, 2).text(label);
     builder.bold(true).size(2, 2).text(big).size(1, 1).bold(false);
     builder.line(' '.repeat(doubledGap) + right + ' ' + V_RULE);
     return;
@@ -512,7 +517,10 @@ export function buildReceipt(data: ReceiptData, profile: PrinterProfile): Uint8A
   put(boxRule(frame, { edge: 'bottom' }));
 
   // --- Footer ---------------------------------------------------------------
+  // ":)" rather than a smiley glyph: CP437 has one at byte 1, but that is a
+  // control code most heads swallow.
   builder.newline().align('center');
+  builder.bold(true).line('Thank you for visiting :)').bold(false);
   builder.line('tapntrade.store');
   builder.align('left');
 

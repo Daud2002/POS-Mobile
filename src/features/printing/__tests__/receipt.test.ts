@@ -116,7 +116,7 @@ describe('receipt layout', () => {
     expect(text).toContain('Coca Cola');
     expect(text).toContain('Items:');
     expect(text).toContain('PAYABLE');
-    expect(text).not.toContain('Thank you');
+    expect(text).toContain('Thank you for visiting :)');
     expect(text).toContain('tapntrade.store');
   });
 
