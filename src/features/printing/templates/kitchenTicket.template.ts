@@ -1,16 +1,26 @@
-import { timeLabel } from '@/lib/date';
 import { orderNumberLabel } from '@/lib/format';
 import { orderTypeLabel } from '@/lib/orderLabel';
 
-import { EscPosBuilder } from '../escpos/builder';
+import { EscPosBuilder, wrapText } from '../escpos/builder';
 import { PrinterProfile } from '../types';
+
+import {
+  boxRule,
+  FrameColumn,
+  frameMargin,
+  framed,
+  receiptStamp,
+  tableRow,
+  writeOrderRow,
+  writeSplit,
+} from './frame';
+import { decodePrintable } from './receipt.template';
 
 /**
  * A kitchen ticket, not a receipt.
  *
  * Deliberately carries no prices: the kitchen needs what to cook, for which
- * table, who sent it, and any special instructions. Quantities are printed
- * first and emphasised because that is the field misread under pressure.
+ * table, who sent it, and any special instructions.
  */
 export interface KitchenTicketData {
   orderNumber: string;
@@ -25,9 +35,16 @@ export interface KitchenTicketData {
     name: string;
     quantity: number;
     notes?: string | null;
+    /** Printed under the dish so the right station picks it up. */
+    categoryName?: string | null;
     /** Pack this line to go, on a dine_out order that also eats in. */
     isParcel?: boolean;
   }>;
+  /** Order-level instructions, printed under the item table. */
+  orderNotes?: string | null;
+  /** Printed for takeaway and delivery, which have no table to go to. */
+  customerName?: string | null;
+  customerPhone?: string | null;
   /**
    * Set for a second or later round so the kitchen can tell an addition from
    * a new order, and for a reprint so a duplicate is not cooked twice.
@@ -43,94 +60,152 @@ function heading(variant: KitchenTicketData['variant']): string {
   return 'KITCHEN ORDER';
 }
 
+/**
+ * Ticket-table columns: No | Item Description | Qty.
+ *
+ * With no rate or amount to print, the dish name takes every column the
+ * cashier receipt spends on money — a clipped dish name is a wrong order.
+ */
+function ticketColumns(frame: number): FrameColumn[] {
+  // No(3) Item(frame - 12) Qty(5) + 4 rules = frame
+  return [{ width: 3 }, { width: frame - 12 }, { width: 5, align: 'right' }];
+}
+
+/**
+ * Renders a kitchen ticket to ESC/POS bytes.
+ *
+ * The same bordered form as the cashier receipt, so the two papers read as one
+ * system — but with no store header, no footer and no money: the kitchen needs
+ * what to cook, for which table, who sent it, and any special instructions.
+ */
 export function buildKitchenTicket(
   data: KitchenTicketData,
   profile: PrinterProfile,
 ): Uint8Array {
-  const builder = new EscPosBuilder(profile);
-  const charsPerLine = profile.charsPerLine ?? 32;
+  const builder = new EscPosBuilder({
+    charsPerLine: profile.charsPerLine,
+    codepage: profile.codepage,
+  });
 
-  builder.init().align('center').bold(true).size(2, 2);
+  const width = profile.charsPerLine;
+  const margin = frameMargin(width);
+  const frame = width - margin * 2;
+  const pad = ' '.repeat(margin);
+  const put = (line: string) => builder.line(pad + line);
+  const cols = ticketColumns(frame);
+  // Text room inside a framed row: two rules and a gutter either side.
+  const textRoom = frame - 4;
+
+  builder.init();
+
+  // --- Header: what kind of ticket this is ----------------------------------
+  builder.align('center').bold(true).size(2, 2);
   builder.line(heading(data.variant));
   builder.size(1, 1).bold(false);
-  builder.divider('=');
 
-  // The destination is the single most important line on the ticket.
-  builder.bold(true).size(2, 2);
-  builder.line(data.tableName ?? orderTypeLabel(data.orderType).toUpperCase());
-  builder.size(1, 1).bold(false);
+  builder.align('left');
+  put(boxRule(frame, { edge: 'top' }));
+
+  // --- When -----------------------------------------------------------------
+  put(framed(frame, `Date: ${receiptStamp(data.date)}`));
+  put(boxRule(frame));
+
+  // --- The number the order is called by, printed big -----------------------
+  writeOrderRow(
+    builder,
+    pad,
+    frame,
+    'Order No: ',
+    data.orderSequence ? String(data.orderSequence) : orderNumberLabel(data.orderNumber),
+    'Kitchen Copy',
+  );
+  put(boxRule(frame));
+
+  // --- Where it is going ----------------------------------------------------
+  const by = data.waiterName ? `by: ${data.waiterName}` : '';
+  let byShown = false;
+  if (data.orderType && data.orderType !== 'none') {
+    writeSplit(builder, pad, frame, orderTypeLabel(data.orderType), by);
+    byShown = Boolean(by);
+  }
+  const trailing = byShown ? '' : by;
+  if (data.tableName) {
+    writeSplit(builder, pad, frame, `Table No: ${data.tableName}`, trailing);
+  } else {
+    // Takeaway and delivery: who the bag is for.
+    if (data.customerName || trailing) {
+      writeSplit(builder, pad, frame, data.customerName || 'Walk-in', trailing);
+    }
+    if (data.customerPhone) put(framed(frame, `Phone: ${data.customerPhone}`));
+  }
   /**
    * A dine-out order sits at a table AND takes a parcel home. Without this
    * line the ticket looks like any other dine-in and the kitchen has no reason
    * to box anything.
    */
   if (data.orderType === 'dine_out') {
-    builder.bold(true).line('*** DINE-OUT + PARCEL ***').bold(false);
-  }
-  builder.divider('=');
-
-  builder.align('left');
-  builder.row(
-    'Order',
-    data.orderSequence ? `#${data.orderSequence}` : orderNumberLabel(data.orderNumber),
-  );
-  if (data.waiterName) builder.row('Waiter', data.waiterName);
-  builder.row('Time', timeLabel(data.date));
-  builder.divider();
-
-  for (const item of data.items) {
-    const prefix = `${String(item.quantity).padStart(2, ' ')} x `;
     builder.bold(true);
-    // Wrap rather than truncate: a clipped dish name is a wrong order.
-    for (const [index, chunk] of wrap(item.name, charsPerLine - prefix.length).entries()) {
-      builder.line(index === 0 ? prefix + chunk : ' '.repeat(prefix.length) + chunk);
-    }
+    put(framed(frame, '*** DINE-OUT + PARCEL ***'));
     builder.bold(false);
+  }
 
-    // Which specific dishes get boxed — the whole point of a dine-out order.
-    if (item.isParcel) {
-      builder.bold(true).line(' '.repeat(prefix.length) + '>> PARCEL').bold(false);
-    }
+  // --- Items ----------------------------------------------------------------
+  put(boxRule(frame, { below: cols }));
+  builder.bold(true);
+  put(tableRow(cols, ['No', 'Item Description', 'Qty']));
+  builder.bold(false);
+  put(boxRule(frame, { above: cols, below: cols }));
 
-    if (item.notes) {
-      for (const chunk of wrap(`** ${item.notes}`, charsPerLine - prefix.length)) {
-        builder.line(' '.repeat(prefix.length) + chunk);
+  const itemRoom = cols[1].width - 1;
+  let count = 0;
+  data.items.forEach((item, index) => {
+    count += Number(item.quantity) || 0;
+
+    // Wrap rather than truncate: a clipped dish name is a wrong order.
+    const [first, ...rest] = wrapText(item.name, itemRoom);
+    put(tableRow(cols, [String(index + 1), first, String(item.quantity)]));
+    for (const continuation of rest) put(tableRow(cols, ['', continuation]));
+
+    if (item.categoryName) {
+      for (const line of wrapText(`(${item.categoryName})`, itemRoom)) {
+        put(tableRow(cols, ['', line]));
       }
     }
-  }
+    // Which specific dishes get boxed — the whole point of a dine-out order.
+    if (item.isParcel) put(tableRow(cols, ['', '>> PARCEL']));
+    if (item.notes) {
+      builder.bold(true);
+      for (const line of wrapText(`** ${item.notes}`, itemRoom)) {
+        put(tableRow(cols, ['', line]));
+      }
+      builder.bold(false);
+    }
+  });
 
-  builder.divider();
-  builder.feed(3);
+  put(boxRule(frame, { above: cols }));
+  put(framed(frame, `Total items: ${count}`));
+
+  if (data.orderNotes) {
+    put(boxRule(frame));
+    builder.bold(true);
+    put(framed(frame, 'Order notes:'));
+    for (const line of wrapText(data.orderNotes, textRoom)) put(framed(frame, line));
+    builder.bold(false);
+  }
+  put(boxRule(frame, { edge: 'bottom' }));
+
+  builder.feed(profile.autoCut ? 3 : 5);
   if (profile.autoCut) builder.cut();
 
   return builder.build();
 }
 
-/** Word wrap that never drops characters. */
-function wrap(value: string, width: number): string[] {
-  const safeWidth = Math.max(8, width);
-  const words = String(value ?? '').split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = '';
-
-  for (const word of words) {
-    if (!current) {
-      current = word;
-    } else if ((current + ' ' + word).length <= safeWidth) {
-      current += ' ' + word;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-    // A single word longer than the line still has to be broken somewhere.
-    while (current.length > safeWidth) {
-      lines.push(current.slice(0, safeWidth));
-      current = current.slice(safeWidth);
-    }
-  }
-
-  if (current) lines.push(current);
-  return lines.length ? lines : [''];
+/** Renders the ticket as plain text, for tests and on-screen previews. */
+export function renderKitchenTicketText(
+  data: KitchenTicketData,
+  profile: PrinterProfile,
+): string {
+  return decodePrintable(buildKitchenTicket(data, profile));
 }
 
 /**
@@ -148,10 +223,15 @@ export function kitchenTicketFromOrder(
     waiterName?: string | null;
     orderType?: string;
     createdAt?: string;
+    /** Order-level notes. */
+    notes?: string | null;
+    customerName?: string | null;
+    customerPhone?: string | null;
     items: Array<{
       productName: string;
       quantity: number;
       notes?: string | null;
+      categoryName?: string | null;
       isParcel?: boolean;
       skipKitchen?: boolean;
     }>;
@@ -165,6 +245,9 @@ export function kitchenTicketFromOrder(
     tableName: order.tableName,
     waiterName: order.waiterName,
     orderType: order.orderType,
+    orderNotes: order.notes,
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
     date: order.createdAt ? new Date(order.createdAt) : new Date(),
     variant: options.variant ?? 'new',
     items: (source ?? [])
@@ -173,6 +256,7 @@ export function kitchenTicketFromOrder(
         name: item.productName,
         quantity: item.quantity,
         notes: item.notes,
+        categoryName: item.categoryName,
         isParcel: item.isParcel,
       })),
   };

@@ -75,7 +75,8 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
         permission: 'categories',
       },
       {
-        // Restaurant accounts do not track stock.
+        // Whole-unit product stock. A restaurant tracks ingredients instead,
+        // on the row below.
         route: 'Inventory',
         label: 'Inventory',
         description: 'Adjust stock and spot low items',
@@ -83,6 +84,15 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
         tone: 'warning',
         permission: 'inventory',
         accountType: 'general',
+      },
+      {
+        route: 'RestaurantInventory',
+        label: 'Inventory',
+        description: 'Ingredients, deliveries and counts — used up by recipes',
+        icon: Warehouse,
+        tone: 'warning',
+        permission: 'inventory',
+        accountType: 'restaurant',
       },
     ],
   },

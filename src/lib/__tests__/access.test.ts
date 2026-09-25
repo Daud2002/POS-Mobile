@@ -39,6 +39,9 @@ describe('permissionsOf', () => {
       );
       expect(restaurantOwner).toContain('customers');
       expect(restaurantOwner).toContain('shifts');
+      // Ingredient stock consumed by recipes.
+      expect(restaurantOwner).toContain('inventory');
+      expect(restaurantOwner).not.toContain('pos');
     });
 
     it('gives staff their base module only', () => {

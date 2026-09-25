@@ -10,6 +10,7 @@ import { CustomersScreen } from '@/features/customers/screens/CustomersScreen';
 import { EmployeesScreen } from '@/features/employees/screens/EmployeesScreen';
 import { ExpensesScreen } from '@/features/expenses/screens/ExpensesScreen';
 import { InventoryScreen } from '@/features/inventory/screens/InventoryScreen';
+import { RestaurantInventoryScreen } from '@/features/inventory/screens/RestaurantInventoryScreen';
 import { OrderCompleteScreen } from '@/features/pos/screens/OrderCompleteScreen';
 import { PrinterSetupScreen } from '@/features/printing/screens/PrinterSetupScreen';
 import { ProductsScreen } from '@/features/products/screens/ProductsScreen';
@@ -110,6 +111,11 @@ export function RootNavigator() {
           <Stack.Screen
             name="Inventory"
             component={InventoryScreen}
+            options={{ title: 'Inventory' }}
+          />
+          <Stack.Screen
+            name="RestaurantInventory"
+            component={RestaurantInventoryScreen}
             options={{ title: 'Inventory' }}
           />
           <Stack.Screen

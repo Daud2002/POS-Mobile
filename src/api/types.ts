@@ -510,6 +510,84 @@ export interface Product {
   updatedAt: string;
 }
 
+/**
+ * Restaurant ingredient stock. `quantity` is in `unit` and may be NEGATIVE:
+ * a sale is never refused for want of stock, so a missed stock-in shows up
+ * as a deficit to correct rather than a blocked till.
+ */
+export type InventoryUnit = 'ml' | 'g' | 'bottle';
+
+export interface InventoryItem {
+  id: string;
+  storeId?: string;
+  name: string;
+  unit: InventoryUnit;
+  /** Bottles per set. Only meaningful for bottle items. */
+  packSize: number;
+  quantity: number;
+  /** At or below this the item is flagged. Null means never flag it. */
+  lowStockThreshold: number | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryItemPayload {
+  name: string;
+  unit: InventoryUnit;
+  packSize?: number;
+  /** Opening stock, in the item unit. Create only. */
+  quantity?: number;
+  lowStockThreshold?: number | null;
+}
+
+/** Unit and count are not editable: counts only move through stock-in/adjust/sales. */
+export interface InventoryItemUpdatePayload {
+  name?: string;
+  packSize?: number;
+  lowStockThreshold?: number | null;
+  isActive?: boolean;
+}
+
+export interface StockInPayload {
+  amount: number;
+  /** Bottle items only: `amount` is a number of sets, multiplied by packSize server-side. */
+  inPacks?: boolean;
+  note?: string;
+}
+
+export interface AdjustStockPayload {
+  /** The counted quantity on hand, in the item unit. */
+  quantity: number;
+  note?: string;
+}
+
+export type InventoryMovementType = 'stock_in' | 'sale' | 'adjustment';
+
+export interface InventoryMovement {
+  id: string;
+  inventoryItemId: string;
+  type: InventoryMovementType;
+  /** Signed, in the item unit: positive in, negative out. */
+  quantity: number;
+  orderId: string | null;
+  note: string | null;
+  createdById: string | null;
+  createdAt: string;
+}
+
+/** One line of a product's recipe: used per ONE unit of the product. */
+export interface RecipeLine {
+  inventoryItemId: string;
+  quantity: number;
+}
+
+export interface RecipeIngredient extends RecipeLine {
+  name: string;
+  unit: InventoryUnit;
+  isActive: boolean;
+}
+
 export interface Customer {
   id: string;
   /** The tenant. Absent on rows the server has not scoped yet. */
@@ -725,7 +803,7 @@ export interface ProductPayload {
   name: string;
   description?: string;
   price: number;
-  costPrice?: number;
+  costPrice?: number | null;
   stock: number;
   lowStockAlertQuantity?: number;
   sku?: string;

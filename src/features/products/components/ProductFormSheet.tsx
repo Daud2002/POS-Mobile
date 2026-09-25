@@ -1,19 +1,32 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { View } from 'react-native';
 import { z } from 'zod';
 
-import { Category, Product, ProductPayload } from '@/api/types';
+import { useAuth } from '@/app/providers/AuthProvider';
+import { ApiError } from '@/api/client';
+import { queryKeys } from '@/api/queryKeys';
+import { inventoryApi } from '@/api/services';
+import { Category, Product, ProductPayload, RecipeLine } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { IconPicker } from '@/components/ui/IconPicker';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Sheet } from '@/components/ui/Sheet';
+import { Text } from '@/components/ui/Text';
+import { useToast } from '@/components/ui/Toast';
 import { DEFAULT_PRODUCT_EMOJI } from '@/constants/emojis';
 import { toNumber } from '@/lib/format';
 import { parseSortOrderInput } from '@/lib/sortOrder';
 import { useTheme } from '@/theme/ThemeProvider';
+import { RecipeEditor, RecipeOption } from '@/features/inventory/components/RecipeEditor';
+import {
+  recipeLinesFromRows,
+  RecipeRow,
+  rowsFromRecipe,
+} from '@/features/inventory/lib/recipe';
 
 /** Numeric fields arrive as strings from TextInput, so parse and validate here. */
 const numericString = (message: string) =>
@@ -50,7 +63,8 @@ interface ProductFormSheetProps {
   product: Product | null;
   categories: Category[];
   saving: boolean;
-  onSubmit: (payload: ProductPayload) => Promise<unknown>;
+  /** Resolves to the saved product — its id is needed to save a new product's recipe. */
+  onSubmit: (payload: ProductPayload) => Promise<Product>;
 }
 
 const EMPTY_FORM: ProductForm = {
@@ -78,6 +92,12 @@ export function ProductFormSheet({
   onSubmit,
 }: ProductFormSheetProps) {
   const theme = useTheme();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // Recipes exist on restaurant accounts only: a general store sells whole
+  // units and tracks them through `stock` instead.
+  const isRestaurant = user?.accountType === 'restaurant';
 
   const {
     control,
@@ -88,6 +108,70 @@ export function ProductFormSheet({
     resolver: zodResolver(productSchema),
     defaultValues: EMPTY_FORM,
   });
+
+  const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([]);
+  const [recipeError, setRecipeError] = useState<string>();
+  const [savingRecipe, setSavingRecipe] = useState(false);
+  // A ref, not state: the load effect below must see a reset made in the
+  // same commit, and a refetch must never overwrite rows being edited.
+  const recipeDirty = useRef(false);
+
+  // Shares the Inventory screen's cache entry, retired items included, so a
+  // recipe still naming a retired item can show its name.
+  const inventoryQuery = useQuery({
+    queryKey: queryKeys.inventory('with-inactive'),
+    queryFn: () => inventoryApi.list({ includeInactive: true }),
+    enabled: open && isRestaurant,
+  });
+
+  const recipeQuery = useQuery({
+    queryKey: queryKeys.recipe(product?.id ?? ''),
+    queryFn: () => inventoryApi.getRecipe(product!.id),
+    enabled: open && isRestaurant && !!product,
+  });
+
+  const recipeOptions = useMemo<RecipeOption[]>(() => {
+    const options: RecipeOption[] = (inventoryQuery.data ?? []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      unit: item.unit,
+      isActive: item.isActive,
+    }));
+    const known = new Set(options.map((option) => option.id));
+    for (const line of recipeQuery.data ?? []) {
+      if (!known.has(line.inventoryItemId)) {
+        options.push({
+          id: line.inventoryItemId,
+          name: line.name,
+          unit: line.unit,
+          isActive: line.isActive,
+        });
+      }
+    }
+    return options.sort((a, b) => a.name.localeCompare(b.name));
+  }, [inventoryQuery.data, recipeQuery.data]);
+
+  useEffect(() => {
+    if (!open) return;
+    recipeDirty.current = false;
+    setRecipeRows([]);
+    setRecipeError(undefined);
+  }, [open, product]);
+
+  useEffect(() => {
+    if (!open || !recipeQuery.data || recipeDirty.current) return;
+    setRecipeRows(rowsFromRecipe(recipeQuery.data));
+  }, [open, recipeQuery.data]);
+
+  const changeRecipe = (rows: RecipeRow[]) => {
+    recipeDirty.current = true;
+    setRecipeError(undefined);
+    setRecipeRows(rows);
+  };
+
+  // Editing a recipe that failed to load would PUT over lines never shown.
+  const recipeUnavailable = !!product && recipeQuery.isError;
+  const recipeLoading = !!product && recipeQuery.isLoading;
 
   // Repopulate whenever the sheet opens, so editing one product then another
   // never shows stale values.
@@ -119,14 +203,26 @@ export function ProductFormSheet({
   }, [open, product, reset]);
 
   const submit = async (values: ProductForm) => {
-    await onSubmit({
+    // Checked before the product is saved, so a bad row never leaves a
+    // product saved without the recipe the owner thought they entered.
+    let recipeLines: RecipeLine[] | null = null;
+    if (isRestaurant && recipeDirty.current && !recipeUnavailable) {
+      const parsed = recipeLinesFromRows(recipeRows);
+      if (parsed.error !== undefined) {
+        setRecipeError(parsed.error);
+        return;
+      }
+      recipeLines = parsed.lines;
+    }
+
+    const saved = await onSubmit({
       name: values.name.trim(),
       description: values.description?.trim() || undefined,
       price: Number(values.price),
       // Drives the profit figure on the owner dashboard. This was previously
       // hardcoded to 0 on both clients, which made reported profit equal to
       // revenue.
-      costPrice: values.costPrice ? Number(values.costPrice) : 0,
+      costPrice: values.costPrice?.trim() ? Number(values.costPrice) : null,
       stock: Number(values.stock),
       lowStockAlertQuantity: Number(values.lowStockAlertQuantity),
       sku: values.sku?.trim() || undefined,
@@ -137,8 +233,28 @@ export function ProductFormSheet({
       // number. The schema has already refused anything unparseable.
       sortOrder: parseSortOrderInput(values.sortOrder ?? '') ?? undefined,
     });
+
+    // The recipe is its own resource keyed by product id, so it can only be
+    // written once the product exists.
+    if (recipeLines && saved?.id) {
+      setSavingRecipe(true);
+      try {
+        const recipe = await inventoryApi.setRecipe(saved.id, recipeLines);
+        queryClient.setQueryData(queryKeys.recipe(saved.id), recipe);
+      } catch (error) {
+        toast.error(
+          `Product saved, but its ingredients were not: ${
+            error instanceof ApiError ? error.message : 'please try again.'
+          }`,
+        );
+      } finally {
+        setSavingRecipe(false);
+      }
+    }
     onClose();
   };
+
+  const busy = saving || savingRecipe;
 
   return (
     <Sheet
@@ -151,14 +267,14 @@ export function ProductFormSheet({
             label="Cancel"
             variant="outline"
             onPress={onClose}
-            disabled={saving}
+            disabled={busy}
             style={{ flex: 1 }}
           />
           <Button
-            label={saving ? 'Saving…' : product ? 'Update' : 'Create'}
+            label={busy ? 'Saving…' : product ? 'Update' : 'Create'}
             onPress={handleSubmit(submit)}
-            loading={saving}
-            disabled={saving}
+            loading={busy}
+            disabled={busy}
             style={{ flex: 1 }}
           />
         </>
@@ -222,24 +338,6 @@ export function ProductFormSheet({
 
         <Controller
           control={control}
-          name="costPrice"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <Input
-              containerStyle={{ flex: 1 }}
-              label="Cost"
-              value={value ?? ''}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              placeholder="0.00"
-              keyboardType="decimal-pad"
-              hint="Used to calculate profit"
-              error={errors.costPrice?.message}
-            />
-          )}
-        />
-
-        <Controller
-          control={control}
           name="stock"
           render={({ field: { onChange, onBlur, value } }) => (
             <Input
@@ -255,6 +353,23 @@ export function ProductFormSheet({
           )}
         />
       </View>
+
+      {/* Profit reads this as-is; the ingredients below only move stock. */}
+      <Controller
+        control={control}
+        name="costPrice"
+        render={({ field: { onChange, onBlur, value } }) => (
+          <Input
+            label="Cost price"
+            value={value ?? ''}
+            onChangeText={onChange}
+            onBlur={onBlur}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            error={errors.costPrice?.message}
+          />
+        )}
+      />
 
       <Controller
         control={control}
@@ -341,6 +456,22 @@ export function ProductFormSheet({
           )}
         />
       </View>
+
+      {isRestaurant ? (
+        recipeUnavailable ? (
+          <Text variant="caption" color="destructive">
+            Could not load this item’s ingredients. Close and reopen to edit them.
+          </Text>
+        ) : (
+          <RecipeEditor
+            rows={recipeRows}
+            onChange={changeRecipe}
+            options={recipeOptions}
+            loading={recipeLoading}
+            error={recipeError}
+          />
+        )
+      ) : null}
     </Sheet>
   );
 }

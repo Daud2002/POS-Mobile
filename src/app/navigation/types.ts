@@ -17,6 +17,8 @@ export type RootStackParamList = {
   Products: undefined;
   Categories: undefined;
   Inventory: undefined;
+  /** Restaurant ingredients (ml, g, bottles) drawn down by recipes. */
+  RestaurantInventory: undefined;
   Customers: undefined;
   CustomerOrders: { customerId: string; customerName: string };
   Employees: undefined;

@@ -17,6 +17,8 @@ export const RealtimeEvents = {
   shiftOpened: 'shift:opened',
   shiftClosed: 'shift:closed',
   shiftCollected: 'shift:collected',
+  /** Ingredient counts moved (stock-in, adjust, or a settled order): `{ itemIds }`. */
+  inventoryUpdated: 'inventory:updated',
 } as const;
 
 let socket: Socket | null = null;

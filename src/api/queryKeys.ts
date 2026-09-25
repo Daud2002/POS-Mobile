@@ -28,6 +28,15 @@ export const queryKeys = {
    */
   profitReport: (tz: string) => ['reports', 'profit', tz] as const,
 
+  /**
+   * Restaurant ingredient stock. Everything sits under 'inventory' so the
+   * `inventory:updated` socket event (and any mutation) can drop the lot.
+   */
+  inventory: (filter?: string) => ['inventory', 'list', filter ?? 'all'] as const,
+  inventoryItem: (id: string) => ['inventory', 'item', id] as const,
+  inventoryMovements: (id: string) => ['inventory', 'item', id, 'movements'] as const,
+  recipe: (productId: string) => ['inventory', 'recipe', productId] as const,
+
   employees: (storeId: string) => ['employees', storeId] as const,
   employeePermissions: (id: string) => ['employee', id, 'permissions'] as const,
 

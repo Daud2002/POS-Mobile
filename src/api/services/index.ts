@@ -3,6 +3,7 @@ export { categoriesApi } from './categories.api';
 export { customersApi } from './customers.api';
 export { employeesApi } from './employees.api';
 export { expensesApi } from './expenses.api';
+export { inventoryApi } from './inventory.api';
 export { ordersApi } from './orders.api';
 export { productsApi } from './products.api';
 export { reportsApi } from './reports.api';

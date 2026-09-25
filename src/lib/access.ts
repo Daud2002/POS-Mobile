@@ -14,7 +14,7 @@ import { effectiveRoleOf } from './roles';
  */
 const RESTAURANT_MODULES: PermissionKey[] = [
   'dashboard', 'expenses', 'cashier', 'kitchen', 'tables', 'products', 'categories', 'orders',
-  'customers', 'shifts',
+  'customers', 'shifts', 'inventory',
 ];
 
 const GENERAL_MODULES: PermissionKey[] = [
@@ -127,6 +127,8 @@ export const PERMISSION_HINTS: Record<PermissionKey, string> = {
   categories: 'Group products for the order screen',
   orders: 'Full order history',
   customers: 'Contacts and purchase history',
-  inventory: 'Stock levels and restocking',
+  // One key, two screens: whole-unit product stock on a general store,
+  // ingredients (ml, g, bottles) consumed by recipes on a restaurant.
+  inventory: 'Stock levels, restocking and ingredients',
   shifts: 'Every cashier’s drawer, and what is still to be handed over',
 };
