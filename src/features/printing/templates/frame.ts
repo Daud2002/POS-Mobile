@@ -1,4 +1,13 @@
-import { EscPosBuilder } from '../escpos/builder';
+/**
+ * What the row writers below need from a builder. Both EscPosBuilder (text
+ * mode) and RasterBuilder (the page as one image) provide it.
+ */
+export interface LineWriter {
+  text(value: string): LineWriter;
+  line(value?: string): LineWriter;
+  bold(on: boolean): LineWriter;
+  size(width: number, height: number): LineWriter;
+}
 
 /**
  * The framed-document primitives shared by the cashier receipt and the
@@ -15,6 +24,11 @@ import { EscPosBuilder } from '../escpos/builder';
  */
 const H = '\u2500'; // ─
 const V_RULE = '\u2502'; // │
+/**
+ * Pass as `side` for a row with no vertical rules: the text keeps exactly the
+ * framed layout, and the lines between rows are printed rules instead.
+ */
+export const OPEN_SIDE = ' ';
 const TL = '\u250c'; // ┌
 const TR = '\u2510'; // ┐
 const BL = '\u2514'; // └
@@ -92,19 +106,17 @@ export function cell(text: string, width: number, align: 'left' | 'right' = 'lef
   return align === 'right' ? value.padStart(room) + ' ' : ' ' + value.padEnd(room);
 }
 
-export function tableRow(cols: FrameColumn[], values: string[]): string {
-  return (
-    V_RULE + cols.map((c, i) => cell(values[i] ?? '', c.width, c.align)).join(V_RULE) + V_RULE
-  );
+export function tableRow(cols: FrameColumn[], values: string[], side = V_RULE): string {
+  return side + cols.map((c, i) => cell(values[i] ?? '', c.width, c.align)).join(side) + side;
 }
 
-export function framed(width: number, text = ''): string {
-  return V_RULE + cell(text, width - 2) + V_RULE;
+export function framed(width: number, text = '', side = V_RULE): string {
+  return side + cell(text, width - 2) + side;
 }
 
 /** A framed line whose text is right-aligned. */
-export function framedRight(width: number, text: string): string {
-  return V_RULE + cell(text, width - 2, 'right') + V_RULE;
+export function framedRight(width: number, text: string, side = V_RULE): string {
+  return side + cell(text, width - 2, 'right') + side;
 }
 
 /**
@@ -115,25 +127,31 @@ export function framedRight(width: number, text: string): string {
  * what tears the whole frame open — 58mm paper with a long order number and a
  * full timestamp hits this immediately.
  */
-export function framedSplit(width: number, left: string, right: string): string[] {
+export function framedSplit(
+  width: number,
+  left: string,
+  right: string,
+  side = V_RULE,
+): string[] {
   const room = width - 2;
-  if (!right) return [framed(width, left)];
+  if (!right) return [framed(width, left, side)];
   if (left.length + right.length + 3 <= room) {
     const gap = room - left.length - right.length - 2;
-    return [V_RULE + ' ' + left + ' '.repeat(gap) + right + ' ' + V_RULE];
+    return [side + ' ' + left + ' '.repeat(gap) + right + ' ' + side];
   }
-  return [framed(width, left), framedRight(width, right)];
+  return [framed(width, left, side), framedRight(width, right, side)];
 }
 
 /** Writes however many rows a split needed, each inset by the frame margin. */
 export function writeSplit(
-  builder: EscPosBuilder,
+  builder: LineWriter,
   pad: string,
   width: number,
   left: string,
   right: string,
+  side = V_RULE,
 ): void {
-  for (const line of framedSplit(width, left, right)) builder.line(pad + line);
+  for (const line of framedSplit(width, left, right, side)) builder.line(pad + line);
 }
 
 /**
@@ -142,7 +160,7 @@ export function writeSplit(
  * border is not.
  */
 export function writeBig(
-  builder: EscPosBuilder,
+  builder: LineWriter,
   pad: string,
   width: number,
   left: string,
@@ -173,41 +191,42 @@ export function writeBig(
  * this. Emphasis is worth losing; the border is not.
  */
 export function writeOrderRow(
-  builder: EscPosBuilder,
+  builder: LineWriter,
   pad: string,
   width: number,
   label: string,
   big: string,
   right: string,
+  side = V_RULE,
 ): void {
   const room = width - 2;
   const doubledGap = room - label.length - big.length * 2 - right.length - 2;
   if (doubledGap >= 2) {
-    builder.text(pad + V_RULE + ' ');
+    builder.text(pad + side + ' ');
     builder.size(1, 2).text(label);
     builder.bold(true).size(2, 2).text(big).size(1, 1).bold(false);
-    builder.line(' '.repeat(doubledGap) + right + ' ' + V_RULE);
+    builder.line(' '.repeat(doubledGap) + right + ' ' + side);
     return;
   }
   const gap = room - label.length - big.length - right.length - 2;
   if (gap >= 1) {
-    builder.text(pad + V_RULE + ' ' + label);
+    builder.text(pad + side + ' ' + label);
     builder.bold(true).text(big).bold(false);
-    builder.line(' '.repeat(gap) + right + ' ' + V_RULE);
+    builder.line(' '.repeat(gap) + right + ' ' + side);
     return;
   }
   // "Order No: 129" on its own row, the copy label under it at the right edge.
   const fill = room - 1 - label.length - big.length;
   if (fill >= 0) {
-    builder.text(pad + V_RULE + ' ' + label);
+    builder.text(pad + side + ' ' + label);
     builder.bold(true).text(big).bold(false);
-    builder.line(' '.repeat(fill) + V_RULE);
-    builder.line(pad + framedRight(width, right));
+    builder.line(' '.repeat(fill) + side);
+    builder.line(pad + framedRight(width, right, side));
     return;
   }
-  builder.line(pad + framed(width, label.trimEnd()));
-  builder.line(pad + framedRight(width, big));
-  builder.line(pad + framedRight(width, right));
+  builder.line(pad + framed(width, label.trimEnd(), side));
+  builder.line(pad + framedRight(width, big, side));
+  builder.line(pad + framedRight(width, right, side));
 }
 
 const MONTHS = [

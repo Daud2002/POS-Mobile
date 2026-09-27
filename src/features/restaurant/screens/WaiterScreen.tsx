@@ -43,8 +43,8 @@ interface CartLine {
   quantity: number;
   notes?: string;
   /**
-   * Pack this line to go. Any packed line makes the order a dine-out; the
-   * waiter never picks dine-in versus dine-out up front any more.
+   * Pack this line to go as a parcel. Anything not marked is dine-in; the
+   * waiter never picks an order type up front.
    */
   isParcel?: boolean;
   /** Served from the counter, not cooked — a drink. Never reaches the kitchen. */
@@ -60,8 +60,8 @@ interface CartLine {
  * reviews everything once before it goes to the kitchen. Only one category's
  * items are ever mounted, which also keeps the screen light.
  *
- * Dine-in versus dine-out is not chosen: every line carries its own toggle,
- * and packing any line is what makes the order a dine-out.
+ * Dine-in versus parcel is not chosen per order: every line carries its own
+ * toggle, and anything left unmarked is dine-in.
  */
 export function WaiterScreen() {
   const theme = useTheme();
@@ -251,11 +251,12 @@ export function WaiterScreen() {
   };
 
   /**
-   * Dine-in or dine-out is a fact about the lines, not a choice: pack any of
-   * them and it is a dine-out. The server derives the same thing; this is
+   * Dine-in or parcel is a fact about the lines, not a choice: anything not
+   * marked parcel is eaten in. The server derives the same thing; this is
    * only so the request says what the waiter sees.
    */
   const hasParcel = cart.some((l) => l.isParcel);
+  const allParcel = hasParcel && cart.every((l) => l.isParcel);
   const orderType = hasParcel ? 'dine_out' : 'dine_in';
   /** Nothing to cook — drinks only — so the button should not promise the kitchen. */
   const needsKitchen = cart.some((l) => !l.skipKitchen);
@@ -666,7 +667,7 @@ export function WaiterScreen() {
       >
         {/*
           The order's type, read back from the lines rather than chosen:
-          mark anything as a parcel and this becomes a dine-out.
+          Dine-in, Parcel, or Dine-in + Parcel when the two are mixed.
         */}
         {cart.length > 0 && !appendTo && (
           <View style={styles.typeRow}>
@@ -680,7 +681,7 @@ export function WaiterScreen() {
               ]}
             >
               <Text variant="caption" style={{ color: hasParcel ? theme.colors.info : theme.colors.mutedForeground }}>
-                {hasParcel ? 'Dine-out — some items packed' : 'Dine-in'}
+                {allParcel ? 'Parcel' : hasParcel ? 'Dine-in + Parcel' : 'Dine-in'}
               </Text>
             </View>
             {!needsKitchen && (
@@ -731,8 +732,7 @@ export function WaiterScreen() {
                   />
                 )}
                 {/* Per LINE, on every line, including a further round: any
-                    dish can go home in a box, and marking one is what makes
-                    the order a dine-out. */}
+                    dish can go home in a box as a parcel. */}
                 <Pressable
                   onPress={() => toggleParcel(line.productId)}
                   style={[
@@ -759,7 +759,7 @@ export function WaiterScreen() {
                         : theme.colors.mutedForeground,
                     }}
                   >
-                    {line.isParcel ? 'Dine-out · packed to go' : 'Dine-in · tap to pack'}
+                    {line.isParcel ? 'Parcel' : 'Dine-in · tap for parcel'}
                   </Text>
                 </Pressable>
               </View>

@@ -257,11 +257,11 @@ export function RestaurantOrdersScreen() {
                   <View style={{ flex: 1 }}>
                     <Text variant="bodySemibold" numberOfLines={1}>
                       {orderLabel(order)} · {orderDestination(order)}
-                      {/* A dine-out order sits at a table, so the destination
-                          alone would not reveal that it also had a parcel. */}
+                      {/* A table order with parcels still shows its table, so
+                          the destination alone would not reveal the parcel. */}
                       {order.orderType === 'dine_out' && order.tableName ? (
                         <Text variant="caption" style={{ color: theme.colors.info }}>
-                          {'  '}dine-out
+                          {'  '}parcel
                         </Text>
                       ) : null}
                     </Text>

@@ -42,8 +42,8 @@ export interface ReceiptData {
   /** 'Store Owner' or the employee's name. */
   dispatchedBy: string;
   /**
-   * Dine-in / dine-out / takeaway / delivery, already written for people.
-   * Printed as its own row so a dine-out bill is distinguishable from a plain
+   * DINE-IN / PARCEL / DINE-IN + PARCEL / TAKEAWAY / DELIVERY, already written
+   * for people. Printed as its own row so a parcel bill is distinguishable from a plain
    * dine-in one — which is exactly what the customer is paying for.
    */
   orderTypeLabel?: string;
@@ -59,7 +59,7 @@ export interface ReceiptData {
     /** Line total discount. */
     discount: number;
     total: number;
-    /** Packed to go, on a dine-out order that also eats in. */
+    /** Packed to go as a parcel. */
     isParcel?: boolean;
   }>;
   /** Σ price × qty, before discounts — matches what the web receipt prints. */
@@ -374,6 +374,14 @@ export function decodePrintable(bytes: Uint8Array): string {
       // GS V m n — cut, two parameter bytes.
       if (command === 0x56) {
         i += 4;
+        continue;
+      }
+      // GS v 0 m xL xH yL yH d… — a raster line; shown as a rule of ─.
+      if (command === 0x76) {
+        const widthBytes = (bytes[i + 4] ?? 0) | ((bytes[i + 5] ?? 0) << 8);
+        const height = (bytes[i + 6] ?? 0) | ((bytes[i + 7] ?? 0) << 8);
+        out += '\u2500'.repeat(Math.round((widthBytes * 8) / 12)) + '\n';
+        i += 8 + widthBytes * height;
         continue;
       }
       // GS ! n — one parameter byte.

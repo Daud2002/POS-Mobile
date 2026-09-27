@@ -140,3 +140,28 @@ describe('ESC/POS command emission', () => {
     expect(Array.from(bytes)).toEqual([0x1d, 0x21, 0x11]);
   });
 });
+
+describe('rule', () => {
+  it('draws a solid GS v 0 line across the head, inset by whole cells', () => {
+    const builder = new EscPosBuilder(profile80);
+    builder.rule(2, 2);
+    const bytes = builder.build();
+
+    // 48 cells × 12 dots = 576 dots = 72 bytes a row; 3 blank rows either side.
+    expect(Array.from(bytes.slice(0, 8))).toEqual([0x1d, 0x76, 0x30, 0, 72, 0, 8, 0]);
+    const rows = Array.from({ length: 8 }, (_, y) => bytes.slice(8 + y * 72, 8 + (y + 1) * 72));
+    expect(rows[0].every((b) => b === 0)).toBe(true);
+    expect(rows[7].every((b) => b === 0)).toBe(true);
+    // Inked rows: 24 dots (3 bytes) blank each side, solid between.
+    for (const row of rows.slice(3, 5)) {
+      expect(Array.from(row.slice(0, 3))).toEqual([0, 0, 0]);
+      expect(row.slice(3, 69).every((b) => b === 0xff)).toBe(true);
+      expect(Array.from(row.slice(69))).toEqual([0, 0, 0]);
+    }
+  });
+
+  it('previews as a rule of line characters', () => {
+    const [line] = render((b) => b.rule(), profile58);
+    expect(line).toBe('─'.repeat(32));
+  });
+});

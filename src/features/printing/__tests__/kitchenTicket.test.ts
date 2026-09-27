@@ -2,6 +2,7 @@ import {
   buildKitchenTicket,
   KitchenTicketData,
   kitchenTicketFromOrder,
+  renderKitchenTicketBitmap,
   renderKitchenTicketText,
 } from '../templates/kitchenTicket.template';
 import { DEFAULT_PRINTER_PROFILE, PrinterProfile } from '../types';
@@ -32,48 +33,16 @@ const ticket: KitchenTicketData = {
   ],
 };
 
-/**
- * Each printed line with the number of COLUMNS it occupies on paper, counting
- * double-width characters (GS ! 0x1x) as the two columns they consume.
- */
-function printedRows(bytes: Uint8Array): Array<{ text: string; columns: number }> {
-  const rows: Array<{ text: string; columns: number }> = [];
-  let text = '';
-  let columns = 0;
-  let doubled = false;
-
-  for (let i = 0; i < bytes.length; i += 1) {
-    const byte = bytes[i];
-    if (byte === 0x1b) {
-      i += bytes[i + 1] === 0x40 ? 1 : 2;
-      continue;
-    }
-    if (byte === 0x1d) {
-      if (bytes[i + 1] === 0x21) doubled = (bytes[i + 2] & 0x10) !== 0;
-      i += bytes[i + 1] === 0x56 ? 3 : 2;
-      continue;
-    }
-    if (byte === 0x0a) {
-      rows.push({ text, columns });
-      text = '';
-      columns = 0;
-      continue;
-    }
-    text += String.fromCharCode(byte);
-    columns += doubled ? 2 : 1;
-  }
-  if (text) rows.push({ text, columns });
-  return rows;
-}
-
 describe('kitchen ticket layout', () => {
   it.each([
     ['58mm', profile58],
     ['80mm', profile80],
   ])('keeps every row within the paper width on %s', (_label, profile) => {
-    for (const row of printedRows(buildKitchenTicket(ticket, profile))) {
-      expect(row.columns).toBeLessThanOrEqual(profile.charsPerLine);
+    for (const row of renderKitchenTicketText(ticket, profile).split('\n')) {
+      expect(row.length).toBeLessThanOrEqual(profile.charsPerLine);
     }
+    // 12 dots a column: the 384-dot head of a 58mm printer, 576 of an 80mm.
+    expect(renderKitchenTicketBitmap(ticket, profile).width).toBe(profile.charsPerLine * 12);
   });
 
   it('prints the framed order header with the kitchen copy label', () => {
@@ -85,7 +54,7 @@ describe('kitchen ticket layout', () => {
     expect(text).toContain('42');
     expect(text).toContain('Kitchen Copy');
     expect(text).not.toContain('Customer Copy');
-    expect(text).toContain('Dine-in');
+    expect(text).toContain('DINE-IN');
     expect(text).toContain('by: Ali');
     expect(text).toContain('Table No: T4');
   });
@@ -133,7 +102,7 @@ describe('kitchen ticket layout', () => {
     );
   });
 
-  it('prints the customer for a takeaway and flags parcels on dine-out', () => {
+  it('prints the customer for a takeaway', () => {
     const takeaway = renderKitchenTicketText(
       {
         ...ticket,
@@ -144,21 +113,84 @@ describe('kitchen ticket layout', () => {
       },
       profile58,
     );
-    expect(takeaway).toContain('Takeaway');
+    expect(takeaway).toContain('TAKEAWAY');
     expect(takeaway).toContain('Sara');
     expect(takeaway).toContain('Phone: 0300 1112223');
     expect(takeaway).not.toContain('Table No');
 
-    const dineOut = renderKitchenTicketText(
+  });
+
+  it.each([
+    ['DINE-IN', 'dine_in', [false, false]],
+    ['DINE-IN + PARCEL', 'dine_out', [true, false]],
+    ['PARCEL', 'dine_out', [true, true]],
+  ])('labels the order %s from its lines', (label, orderType, parcels) => {
+    const text = renderKitchenTicketText(
       {
         ...ticket,
-        orderType: 'dine_out',
-        items: [{ name: 'Biryani', quantity: 1, isParcel: true }],
+        orderType: orderType as string,
+        items: (parcels as boolean[]).map((isParcel, i) => ({
+          name: `Dish ${i + 1}`,
+          quantity: 1,
+          isParcel,
+        })),
       },
       profile58,
     );
-    expect(dineOut).toContain('*** DINE-OUT + PARCEL ***');
-    expect(dineOut).toContain('>> PARCEL');
+    const service = text.split('\n').find((l) => l.includes('by: Ali')) ?? '';
+    expect(service.replace(/\u2502/g, '').trim().startsWith(`${label} `)).toBe(true);
+    expect(text).not.toMatch(/DINE-OUT|Dine-out/i);
+    expect(text.split('>> PARCEL').length - 1).toBe(
+      (parcels as boolean[]).filter(Boolean).length,
+    );
+  });
+
+  it('frames the ticket like the cashier receipt', () => {
+    const rows = renderKitchenTicketText(ticket, profile80).split('\n');
+    const frame = rows.filter((row) => row.trim().startsWith('\u2502'));
+    expect(rows.some((row) => row.trim().startsWith('\u250c'))).toBe(true);
+    expect(rows.some((row) => row.trim().startsWith('\u2514'))).toBe(true);
+    expect(frame.length).toBeGreaterThan(10);
+    // The item table's column rules open and close with the table.
+    expect(rows.some((row) => row.includes('\u252c'))).toBe(true);
+    expect(rows.some((row) => row.includes('\u253c'))).toBe(true);
+    expect(rows.some((row) => row.includes('\u2534'))).toBe(true);
+  });
+
+  it.each([
+    ['58mm', profile58],
+    ['80mm', profile80],
+  ])('prints as one image with no text for the printer to look up on %s', (_label, profile) => {
+    const bytes = buildKitchenTicket(ticket, profile);
+    const { height } = renderKitchenTicketBitmap(ticket, profile);
+    const stride = (profile.charsPerLine * 12) / 8;
+
+    // INIT, then GS v 0 bands back to back covering the whole bitmap.
+    let i = 2;
+    let rows = 0;
+    while (bytes[i] === 0x1d && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x30) {
+      expect(bytes[i + 4] | (bytes[i + 5] << 8)).toBe(stride);
+      const band = bytes[i + 6] | (bytes[i + 7] << 8);
+      rows += band;
+      i += 8 + stride * band;
+    }
+    expect(rows).toBe(height);
+    // Only the feed and the cut are left after the image.
+    expect(Array.from(bytes.slice(i))).toEqual([0x1b, 0x64, 3, 0x1d, 0x56, 66, 3]);
+  });
+
+  it('draws the left border as one unbroken line', () => {
+    const { width, height, data } = renderKitchenTicketBitmap(ticket, profile80);
+    const stride = width / 8;
+    // Two blank margin columns, then the border down the middle of the next cell.
+    const x = 2 * 12 + 6 - 1;
+    const on = (y: number) => (data[y * stride + (x >> 3)] & (0x80 >> (x & 7))) !== 0;
+
+    const inked = Array.from({ length: height }, (_, y) => y).filter(on);
+    const first = inked[0];
+    const last = inked[inked.length - 1];
+    expect(last - first).toBeGreaterThan(height / 2);
+    expect(inked.length).toBe(last - first + 1);
   });
 
   it('cuts only when the profile auto-cuts', () => {

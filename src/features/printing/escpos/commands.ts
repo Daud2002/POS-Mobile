@@ -53,6 +53,27 @@ export const Cmd = {
     return Uint8Array.from([ESC, 0x74, n]);
   },
 
+  /**
+   * GS v 0 — a solid horizontal line as a raster bit image.
+   *
+   * A line the printer DRAWS, not a character it looks up, so it prints the
+   * same on every code page — box-drawing glyphs came out as boxes on the
+   * kitchen printer. `widthDots` is the full print width; `inset` leaves that
+   * many dots blank either side, and `space` blank rows above and below give
+   * the line room from the text around it.
+   */
+  rasterLine(widthDots: number, thickness: number, inset = 0, space = 0): Uint8Array {
+    const widthBytes = Math.ceil(widthDots / 8);
+    const height = thickness + space * 2;
+    const row = new Uint8Array(widthBytes);
+    for (let x = inset; x < widthDots - inset; x += 1) row[x >> 3] |= 0x80 >> (x & 7);
+
+    const out = new Uint8Array(8 + widthBytes * height);
+    out.set([GS, 0x76, 0x30, 0, widthBytes & 0xff, widthBytes >> 8, height & 0xff, height >> 8]);
+    for (let y = space; y < space + thickness; y += 1) out.set(row, 8 + y * widthBytes);
+    return out;
+  },
+
   /** ESC 3 n — set line spacing to n dots (default is 30–34). */
   lineSpacing(dots: number): Uint8Array {
     return Uint8Array.from([ESC, 0x33, Math.max(0, Math.min(255, dots))]);

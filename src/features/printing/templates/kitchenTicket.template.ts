@@ -1,7 +1,8 @@
 import { orderNumberLabel } from '@/lib/format';
-import { orderTypeLabel } from '@/lib/orderLabel';
+import { serviceLabel } from '@/lib/orderLabel';
 
-import { EscPosBuilder, wrapText } from '../escpos/builder';
+import { wrapText } from '../escpos/builder';
+import { RasterBuilder } from '../escpos/raster';
 import { PrinterProfile } from '../types';
 
 import {
@@ -14,7 +15,6 @@ import {
   writeOrderRow,
   writeSplit,
 } from './frame';
-import { decodePrintable } from './receipt.template';
 
 /**
  * A kitchen ticket, not a receipt.
@@ -37,7 +37,7 @@ export interface KitchenTicketData {
     notes?: string | null;
     /** Printed under the dish so the right station picks it up. */
     categoryName?: string | null;
-    /** Pack this line to go, on a dine_out order that also eats in. */
+    /** Pack this line to go as a parcel. */
     isParcel?: boolean;
   }>;
   /** Order-level instructions, printed under the item table. */
@@ -72,20 +72,21 @@ function ticketColumns(frame: number): FrameColumn[] {
 }
 
 /**
- * Renders a kitchen ticket to ESC/POS bytes.
- *
- * The same bordered form as the cashier receipt, so the two papers read as one
- * system — but with no store header, no footer and no money: the kitchen needs
- * what to cook, for which table, who sent it, and any special instructions.
+ * Lays the ticket out: the same bordered form as the cashier receipt, so the
+ * two papers read as one system — but with no store header, no footer and no
+ * money: the kitchen needs what to cook, for which table, who sent it, and any
+ * special instructions.
  */
-export function buildKitchenTicket(
+function layoutKitchenTicket(
   data: KitchenTicketData,
   profile: PrinterProfile,
-): Uint8Array {
-  const builder = new EscPosBuilder({
-    charsPerLine: profile.charsPerLine,
-    codepage: profile.codepage,
-  });
+): RasterBuilder {
+  /**
+   * Printed as one image, not as text. The frame is box-drawing characters,
+   * and the kitchen printer's code page turned those into rows of boxes;
+   * drawn as a picture, the border is solid on any printer.
+   */
+  const builder = new RasterBuilder({ charsPerLine: profile.charsPerLine });
 
   const width = profile.charsPerLine;
   const margin = frameMargin(width);
@@ -122,10 +123,15 @@ export function buildKitchenTicket(
   put(boxRule(frame));
 
   // --- Where it is going ----------------------------------------------------
+  // DINE-IN, PARCEL or DINE-IN + PARCEL, read off the lines: the kitchen has
+  // to know at a glance whether anything on this paper gets boxed.
   const by = data.waiterName ? `by: ${data.waiterName}` : '';
+  const service = serviceLabel(data.orderType, data.items);
   let byShown = false;
-  if (data.orderType && data.orderType !== 'none') {
-    writeSplit(builder, pad, frame, orderTypeLabel(data.orderType), by);
+  if (service) {
+    builder.bold(true);
+    writeSplit(builder, pad, frame, service, by);
+    builder.bold(false);
     byShown = Boolean(by);
   }
   const trailing = byShown ? '' : by;
@@ -137,16 +143,6 @@ export function buildKitchenTicket(
       writeSplit(builder, pad, frame, data.customerName || 'Walk-in', trailing);
     }
     if (data.customerPhone) put(framed(frame, `Phone: ${data.customerPhone}`));
-  }
-  /**
-   * A dine-out order sits at a table AND takes a parcel home. Without this
-   * line the ticket looks like any other dine-in and the kitchen has no reason
-   * to box anything.
-   */
-  if (data.orderType === 'dine_out') {
-    builder.bold(true);
-    put(framed(frame, '*** DINE-OUT + PARCEL ***'));
-    builder.bold(false);
   }
 
   // --- Items ----------------------------------------------------------------
@@ -171,8 +167,12 @@ export function buildKitchenTicket(
         put(tableRow(cols, ['', line]));
       }
     }
-    // Which specific dishes get boxed — the whole point of a dine-out order.
-    if (item.isParcel) put(tableRow(cols, ['', '>> PARCEL']));
+    // Which specific dishes get boxed.
+    if (item.isParcel) {
+      builder.bold(true);
+      put(tableRow(cols, ['', '>> PARCEL']));
+      builder.bold(false);
+    }
     if (item.notes) {
       builder.bold(true);
       for (const line of wrapText(`** ${item.notes}`, itemRoom)) {
@@ -183,7 +183,9 @@ export function buildKitchenTicket(
   });
 
   put(boxRule(frame, { above: cols }));
+  builder.bold(true);
   put(framed(frame, `Total items: ${count}`));
+  builder.bold(false);
 
   if (data.orderNotes) {
     put(boxRule(frame));
@@ -197,15 +199,31 @@ export function buildKitchenTicket(
   builder.feed(profile.autoCut ? 3 : 5);
   if (profile.autoCut) builder.cut();
 
-  return builder.build();
+  return builder;
 }
 
-/** Renders the ticket as plain text, for tests and on-screen previews. */
+/** Renders a kitchen ticket to ESC/POS bytes: one raster image, then feed and cut. */
+export function buildKitchenTicket(
+  data: KitchenTicketData,
+  profile: PrinterProfile,
+): Uint8Array {
+  return layoutKitchenTicket(data, profile).build();
+}
+
+/** The ticket's layout as plain text, for tests and on-screen previews. */
 export function renderKitchenTicketText(
   data: KitchenTicketData,
   profile: PrinterProfile,
 ): string {
-  return decodePrintable(buildKitchenTicket(data, profile));
+  return layoutKitchenTicket(data, profile).toText();
+}
+
+/** The ticket as the 1-bit image the printer receives, for tests and previews. */
+export function renderKitchenTicketBitmap(
+  data: KitchenTicketData,
+  profile: PrinterProfile,
+): { width: number; height: number; data: Uint8Array } {
+  return layoutKitchenTicket(data, profile).toBitmap();
 }
 
 /**

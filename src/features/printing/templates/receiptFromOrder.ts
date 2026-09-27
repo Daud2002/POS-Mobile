@@ -1,7 +1,7 @@
 import { AppUser, InvoiceData, Order, RestaurantOrder, Store } from '@/api/types';
 import { paymentLabel } from '@/constants/statuses';
 import { toNumber } from '@/lib/format';
-import { orderDestination, orderTypeLabel } from '@/lib/orderLabel';
+import { orderDestination, serviceLabel } from '@/lib/orderLabel';
 import { paymentParts } from '@/lib/payment';
 
 import { ReceiptData } from './receipt.template';
@@ -180,12 +180,9 @@ export function receiptFromRestaurantOrder(params: {
     invoiceNumber: order.orderSequence ? `#${order.orderSequence}` : order.orderNumber,
     date: new Date(order.createdAt),
     customerName: order.customerName ?? destination,
-    // Printed as their own rows, so a dine-out bill says so explicitly rather
-    // than being indistinguishable from a plain dine-in one.
-    orderTypeLabel:
-      order.orderType && order.orderType !== 'none'
-        ? orderTypeLabel(order.orderType)
-        : undefined,
+    // DINE-IN, PARCEL or DINE-IN + PARCEL, read off the lines — the same
+    // words the kitchen ticket prints.
+    orderTypeLabel: serviceLabel(order.orderType, order.items ?? []) || undefined,
     tableName: order.tableName,
     // The rider works from this paper on a delivery order.
     customerPhone: order.customerPhone,

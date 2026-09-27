@@ -57,6 +57,11 @@ const TRANSLITERATE: Record<string, string> = {
   ' ': ' ',
 };
 
+/** The ASCII stand-in for a character no code page carries, if it has one. */
+export function transliterate(char: string): string | undefined {
+  return TRANSLITERATE[char];
+}
+
 /**
  * Maps a single character to its printable byte(s).
  * Returns an empty array for characters that cannot be represented at all.

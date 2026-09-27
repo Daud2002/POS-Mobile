@@ -19,7 +19,8 @@ export function orderLabel(order: {
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
   dine_in: 'Dine-in',
-  dine_out: 'Dine-out',
+  // Stored as dine_out; to people it is simply an order with parcels in it.
+  dine_out: 'Parcel',
   takeaway: 'Takeaway',
   delivery: 'Delivery',
 };
@@ -35,6 +36,26 @@ const ORDER_TYPE_LABELS: Record<string, string> = {
 export function orderTypeLabel(orderType?: string | null): string {
   if (!orderType || orderType === 'none') return '—';
   return ORDER_TYPE_LABELS[orderType] ?? orderType.replace(/_/g, ' ');
+}
+
+/**
+ * What the paper says the order is: DINE-IN, PARCEL, or DINE-IN + PARCEL.
+ *
+ * A waiter never picks a type; they mark lines as parcel and everything else
+ * is eaten in. So for a table order the label is read off the lines rather
+ * than the stored type, which cannot tell "some parcel" from "all parcel".
+ * Takeaway and delivery have no table and keep their own name.
+ */
+export function serviceLabel(
+  orderType?: string | null,
+  items: Array<{ isParcel?: boolean | null }> = [],
+): string {
+  if (!orderTypeNeedsTable(orderType)) {
+    return orderType && orderType !== 'none' ? orderTypeLabel(orderType).toUpperCase() : '';
+  }
+  const parcels = items.filter((item) => !!item.isParcel).length;
+  if (parcels === 0) return 'DINE-IN';
+  return parcels === items.length ? 'PARCEL' : 'DINE-IN + PARCEL';
 }
 
 const ORDER_STATUS_LABELS: Record<string, string> = {

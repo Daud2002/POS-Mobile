@@ -1,6 +1,9 @@
 import { Cmd, CodepageValue, concatBytes } from './commands';
 import { clampToWidth, encodeText, printedWidth } from './encoding';
 
+/** Font A cell width in printer dots. */
+const DOTS_PER_CELL = 12;
+
 export type Align = 'left' | 'center' | 'right';
 
 export interface BuilderProfile {
@@ -94,6 +97,16 @@ export class EscPosBuilder {
     for (const wrappedLine of wrapText(value, this.width)) {
       this.line(wrappedLine);
     }
+    return this;
+  }
+
+  /**
+   * A solid printed line across the paper, `inset` character cells in from
+   * each edge. Font A is 12 dots a cell, so 48 cells is the 576-dot head of an
+   * 80 mm printer and 32 the 384 dots of a 58 mm one.
+   */
+  rule(thickness = 2, inset = 0): this {
+    this.chunks.push(Cmd.rasterLine(this.width * DOTS_PER_CELL, thickness, inset * DOTS_PER_CELL, 3));
     return this;
   }
 

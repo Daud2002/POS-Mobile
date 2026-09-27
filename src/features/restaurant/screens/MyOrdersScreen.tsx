@@ -136,7 +136,7 @@ export function MyOrdersScreen() {
                       </Text>
                       {order.orderType === 'dine_out' ? (
                         <Text variant="caption" style={{ color: theme.colors.info }}>
-                          {'  '}dine-out
+                          {'  '}parcel
                         </Text>
                       ) : null}
                     </Text>
@@ -219,7 +219,7 @@ export function MyOrdersScreen() {
           <View style={styles.legend}>
             <ShoppingBag size={12} color={theme.colors.info} />
             <Text variant="caption" color="mutedForeground">
-              dine-out: some items on the order are packed to go.
+              parcel: some or all items on the order are packed to go.
             </Text>
           </View>
         )}

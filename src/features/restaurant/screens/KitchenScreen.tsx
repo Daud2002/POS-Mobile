@@ -382,11 +382,11 @@ export function KitchenScreen() {
                       {orderLabel(order)} · {order.waiterName ?? 'Unknown'} ·{' '}
                       {new Date(order.createdAt).toLocaleTimeString()}
                     </Text>
-                    {/* A dine-out order eats in AND takes a parcel, so the
-                        kitchen has to box part of it. */}
+                    {/* Some or all of the lines go out as a parcel, so the
+                        kitchen has to box them. */}
                     {order.orderType === 'dine_out' ? (
                       <Text variant="caption" style={{ color: theme.colors.info }}>
-                        Dine-out — pack the parcel items
+                        Parcel — pack the marked items
                       </Text>
                     ) : null}
                   </View>
@@ -424,7 +424,7 @@ export function KitchenScreen() {
                             {'  '}NEW
                           </Text>
                         ) : null}
-                        {/* Which dishes to box on a dine-out order. */}
+                        {/* Which dishes to box as a parcel. */}
                         {item.isParcel ? (
                           <Text variant="caption" style={{ color: theme.colors.info }}>
                             {'  '}PARCEL
