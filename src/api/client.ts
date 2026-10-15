@@ -91,6 +91,15 @@ class ApiClient {
     this.onUnauthorized = handler;
   }
 
+  /**
+   * Ends the session as a failed refresh would — AuthProvider's handler clears
+   * the stored tokens. Also called when the server pushes a revocation (the
+   * account or its store was deactivated).
+   */
+  expireSession(): void {
+    this.onUnauthorized?.();
+  }
+
   /** Exchanges the refresh token for a new pair. Null means "session is over". */
   private async refreshAccessToken(): Promise<string | null> {
     if (!this.refreshInFlight) {
@@ -181,7 +190,7 @@ class ApiClient {
         if (refreshed) {
           return this.request<T>(path, options, true);
         }
-        this.onUnauthorized?.();
+        this.expireSession();
       }
       throw new ApiError(extractMessage(payload) ?? 'Request failed', response.status);
     }

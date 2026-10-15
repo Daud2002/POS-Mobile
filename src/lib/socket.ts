@@ -19,6 +19,8 @@ export const RealtimeEvents = {
   shiftCollected: 'shift:collected',
   /** Ingredient counts moved (stock-in, adjust, or a settled order): `{ itemIds }`. */
   inventoryUpdated: 'inventory:updated',
+  /** The account or its whole store was deactivated; sign out now. */
+  sessionRevoked: 'session:revoked',
 } as const;
 
 let socket: Socket | null = null;
@@ -45,6 +47,14 @@ export function getSocket(): Socket {
   // orders — the worst failure mode for a kitchen.
   socket.io.on('reconnect_attempt', () => {
     if (socket) socket.auth = { token: apiClient.getToken() };
+  });
+
+  // Sign out at once rather than when the next request bounces. The socket is
+  // dropped too, so the next sign-in on this device connects with its own
+  // token instead of retrying the revoked one.
+  socket.on(RealtimeEvents.sessionRevoked, () => {
+    disconnectSocket();
+    apiClient.expireSession();
   });
 
   return socket;
