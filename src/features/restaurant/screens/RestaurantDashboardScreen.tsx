@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import {
   PiggyBank,
   ShoppingCart,
   TrendingUp,
+  Truck,
   Wallet,
 } from 'lucide-react-native';
 
@@ -19,6 +20,7 @@ import { useAuth } from '@/app/providers/AuthProvider';
 import { queryKeys } from '@/api/queryKeys';
 import { Screen } from '@/components/layout';
 import { SectionCard, StatCard, StatRow, KeyValueRow } from '@/components/data';
+import { SubscriptionBanner } from '@/components/data/SubscriptionBanner';
 import { Text } from '@/components/ui';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
@@ -39,10 +41,16 @@ function toneOf(value: number | null | undefined): Tone {
 export function RestaurantDashboardScreen() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
-  const { user } = useAuth();
+  const { user, refresh: refreshProfile } = useAuth();
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState<ProfitPeriodKey>('today');
+
+  // The subscription expiry rides on the profile; re-read it on every visit
+  // so a renewal the admin just recorded clears the banner without a re-login.
+  useEffect(() => {
+    void refreshProfile();
+  }, [refreshProfile]);
 
   /**
    * One period picker drives every figure at the top. Sales, cost, gross
@@ -82,6 +90,8 @@ export function RestaurantDashboardScreen() {
     <Screen scrollable refreshing={reportQuery.isRefetching} onRefresh={refresh}>
       <View style={{ gap: 14 }}>
         <Text variant="h2">Dashboard</Text>
+
+        <SubscriptionBanner />
 
         {/*
           The period filter. Horizontal scroll rather than wrapping: six pills
@@ -177,6 +187,15 @@ export function RestaurantDashboardScreen() {
             value={format(report?.discountTotal ?? 0)}
             icon={<Percent size={18} color={theme.colors.warning} />}
             tone="warning"
+            loading={reportQuery.isLoading}
+          />
+          {/* Collected on delivery orders in this window; sits outside Revenue, which is what the food sold for. */}
+          <StatCard
+            title="Delivery charges"
+            subtitle="not in revenue"
+            value={format(report?.deliveryChargeTotal ?? 0)}
+            icon={<Truck size={18} color={theme.colors.accent} />}
+            tone="accent"
             loading={reportQuery.isLoading}
           />
         </StatRow>

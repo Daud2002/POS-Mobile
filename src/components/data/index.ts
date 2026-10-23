@@ -3,3 +3,4 @@ export { SectionCard } from './SectionCard';
 export { StatCard } from './StatCard';
 export { StatRow } from './StatRow';
 export { StatusPill } from './StatusPill';
+export { SubscriptionBanner } from './SubscriptionBanner';

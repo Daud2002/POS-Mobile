@@ -264,6 +264,8 @@ export interface RestaurantSalesReport {
   cost: number;
   profit: number;
   discountTotal: number;
+  /** Collected on delivery orders in the window; sits outside `revenue`. */
+  deliveryChargeTotal: number;
   averageOrderValue: number;
   /** Lines sold with no cost price recorded — profit is overstated by these. */
   unknownCostLineCount: number;
@@ -435,6 +437,14 @@ export interface AppUser {
    * lag the API by a release.
    */
   permissions?: PermissionKey[];
+  /**
+   * The day the store is paid through ('YYYY-MM-DD'), or null when the
+   * platform admin has not recorded a payment. Absent from an API that
+   * predates subscriptions; lib/subscription.ts treats both as "no banner".
+   */
+  subscriptionExpiresAt?: string | null;
+  /** Set only on a session a platform admin opened through an impersonation link (web only today). */
+  impersonatedBy?: { id: string; name: string | null } | null;
 }
 
 export interface LoginResponse {

@@ -120,8 +120,9 @@ function bumpLine(prev: CartLine[], productId: string, delta: number): CartLine[
  * discount (and, on a delivery, the charge) alongside the dishes, and one
  * button sends it to the kitchen and prints the bill. The money is booked
  * only when the cashier marks it paid, once the kitchen has handed it over.
- * Printing claims the order for this till — from then on no other cashier
- * sees it — so two counters cannot both collect for it.
+ * Printing does NOT claim the order: it stays in front of every till, with
+ * "bill by …" showing whose paper is out, until somebody marks it paid — so a
+ * second cashier can take the money when the first is busy or gone home.
  */
 export function RestaurantCashierScreen() {
   const theme = useTheme();
@@ -255,8 +256,8 @@ export function RestaurantCashierScreen() {
 
   /**
    * Keep the open bill in sync when a waiter adds a round to it — and close
-   * it if it has left this till's list, which happens when another cashier
-   * prints it first or a waiter's round releases this cashier's claim.
+   * it if it has left this till's list, which happens when another till
+   * settles or cancels it.
    */
   useEffect(() => {
     if (!selected) return;
@@ -492,8 +493,8 @@ export function RestaurantCashierScreen() {
 
   /**
    * Prints, or reprints, the bill with the discount and charge as they stand
-   * in the boxes. The server fixes the figures and claims the order for this
-   * cashier; the paper is printed from what it returns.
+   * in the boxes. The server fixes the figures and marks the order "bill
+   * printed" by this cashier; the paper is printed from what it returns.
    */
   const printBill = async () => {
     if (!selected) return;
@@ -568,8 +569,8 @@ export function RestaurantCashierScreen() {
       }
       discardEdits();
       if (updated) setSelected(updated);
-      // This till keeps its claim through its own edit, so the order still
-      // reads "bill printed" — but the paper no longer matches it.
+      // A cashier's own edit keeps the "bill printed" marker, so the order
+      // still reads as printed — but the paper no longer matches it.
       setBillStale(wasPrinted);
       refresh();
       toast.success(
@@ -812,6 +813,8 @@ export function RestaurantCashierScreen() {
                 <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                   {orderLabel(order)} · {order.waiterName ?? 'Unknown'} ·{' '}
                   {order.items?.length ?? 0} items · {orderStatusLabel(order.orderStatus)}
+                  {/* Whose paper is out, so a second till knows who to ask. */}
+                  {order.billPrinted && order.billPrintedByName ? ` · bill by ${order.billPrintedByName}` : ''}
                 </Text>
               </View>
               <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>

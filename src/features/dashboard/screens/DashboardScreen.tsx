@@ -6,6 +6,7 @@ import {
   Wallet,
   Banknote,
 } from 'lucide-react-native';
+import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { useAuth } from '@/app/providers/AuthProvider';
@@ -14,6 +15,7 @@ import { SectionCard } from '@/components/data/SectionCard';
 import { StatCard } from '@/components/data/StatCard';
 import { StatRow } from '@/components/data/StatRow';
 import { StatusPill } from '@/components/data/StatusPill';
+import { SubscriptionBanner } from '@/components/data/SubscriptionBanner';
 import { Screen } from '@/components/layout/Screen';
 import { Avatar } from '@/components/ui/Avatar';
 import { Divider } from '@/components/ui/Divider';
@@ -36,9 +38,15 @@ import { useDashboardData } from '../hooks/useDashboardData';
  */
 export function DashboardScreen() {
   const theme = useTheme();
-  const { user } = useAuth();
+  const { user, refresh: refreshProfile } = useAuth();
   const { format } = useStoreCurrency();
   const data = useDashboardData();
+
+  // The subscription expiry rides on the profile; re-read it on every visit
+  // so a renewal the admin just recorded clears the banner without a re-login.
+  useEffect(() => {
+    void refreshProfile();
+  }, [refreshProfile]);
 
   const maxTopQuantity = Math.max(...data.topProducts.map((p) => p.quantity), 1);
 
@@ -77,6 +85,9 @@ export function DashboardScreen() {
           </View>
         </Gradient>
       </View>
+
+      {/* Renewal warning: only once the subscription is within three days of lapsing. */}
+      <SubscriptionBanner style={{ marginBottom: theme.spacing.lg }} />
 
       {/* Hero: today's revenue ------------------------------------------ */}
       <View style={[{ borderRadius: theme.radius.xl }, theme.shadows.glow]}>

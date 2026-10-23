@@ -3,11 +3,14 @@ import { View, StyleSheet, Pressable } from 'react-native';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, ChevronDown, Printer } from 'lucide-react-native';
 
-import { restaurantApi } from '@/api/services';
+import { restaurantApi, storesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
-import type { OrderEvent } from '@/api/types';
+import type { OrderEvent, RestaurantOrder } from '@/api/types';
 import { Screen } from '@/components/layout';
-import { Button, EmptyState, SearchInput, Text } from '@/components/ui';
+import { Button, EmptyState, SearchInput, Text, useToast } from '@/components/ui';
+import { usePrinter } from '@/features/printing/hooks/usePrinter';
+import { receiptFromRestaurantOrder } from '@/features/printing/templates/receiptFromOrder';
+import { useStoreId } from '@/hooks/useStoreId';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { useRealtime } from '@/hooks/useRealtime';
 import { useDebouncedValue } from '@/hooks/useDebouncedCallback';
@@ -117,13 +120,53 @@ const FILTERS: ReadonlyArray<{
 
 export function RestaurantOrdersScreen() {
   const theme = useTheme();
-  const { format } = useStoreCurrency();
+  const toast = useToast();
+  const storeId = useStoreId();
+  const { format, currency } = useStoreCurrency();
   const queryClient = useQueryClient();
+  const { printReceipt, hasPrinter } = usePrinter();
 
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
+
+  // The receipt header: name, address, phone.
+  const storeQuery = useQuery({
+    queryKey: queryKeys.store(storeId ?? ''),
+    queryFn: () => storesApi.getById(storeId as string),
+    enabled: !!storeId,
+  });
+
+  /**
+   * Prints the bill from the list — a reprint for a settled order (the
+   * customer wants their copy after paying), or the first print of a live
+   * one. An empty body keeps whatever discount and delivery charge the order
+   * already carries; on a settled order the server changes nothing but the
+   * print count.
+   */
+  const printBill = async (order: RestaurantOrder) => {
+    setPrintingId(order.id);
+    try {
+      const bill = await restaurantApi.printBill(order.id, {});
+      const result = await printReceipt(
+        receiptFromRestaurantOrder({
+          order: bill,
+          store: storeQuery.data,
+          currency,
+          isReprint: !!order.billPrinted,
+        }),
+      );
+      if (result.ok) toast.success(order.billPrinted ? 'Bill reprinted' : 'Bill printed');
+      else toast.error(result.error ?? 'Receipt printing failed');
+      queryClient.invalidateQueries({ queryKey: ['restaurant'] });
+    } catch (error: any) {
+      toast.error(error?.message ?? 'Failed to print the bill');
+    } finally {
+      setPrintingId(null);
+    }
+  };
 
   const active = FILTERS.find((f) => f.key === filter);
   const statuses = active?.statuses;
@@ -351,6 +394,26 @@ export function RestaurantOrdersScreen() {
                         ? ` · ${paymentSummary(order, format)}`
                         : ''}
                     </Text>
+
+                    {/* Drafts have no bill yet and a cancelled order never will. */}
+                    {order.orderStatus !== 'draft' && order.orderStatus !== 'cancelled' ? (
+                      <View style={{ marginTop: 6, gap: 4 }}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          icon={<Printer size={16} color={theme.colors.foreground} />}
+                          label={order.billPrinted ? 'Reprint bill' : 'Print bill'}
+                          loading={printingId === order.id}
+                          disabled={!hasPrinter || printingId === order.id}
+                          onPress={() => void printBill(order)}
+                        />
+                        {!hasPrinter ? (
+                          <Text variant="caption" color="mutedForeground">
+                            Pair a printer in Settings to print bills from here.
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
 
                     <OrderHistory orderId={order.id} format={format} />
                   </View>

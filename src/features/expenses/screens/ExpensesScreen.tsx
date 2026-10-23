@@ -6,9 +6,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
 import { queryKeys } from '@/api/queryKeys';
-import { expensesApi } from '@/api/services';
+import { expensesApi, shiftsApi } from '@/api/services';
 import { Expense, ExpensePayload } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
+import { ShiftBar } from '@/features/shifts/components/ShiftBar';
+import { effectiveRoleOf } from '@/lib/roles';
 import { StatCard } from '@/components/data/StatCard';
 import { StatRow } from '@/components/data/StatRow';
 import { PageFade } from '@/components/layout/PageFade';
@@ -65,6 +67,30 @@ export function ExpensesScreen() {
   const queryClient = useQueryClient();
 
   const owner = canManageExpenseCategories(user);
+
+  /**
+   * A cashier or supervisor on a tenant with shifts on must have a drawer
+   * open to touch the ledger: their cash spend comes off that drawer's
+   * expected cash. The server refuses with a 409 either way; this explains
+   * it and puts the "Open shift" button right here.
+   */
+  const role = effectiveRoleOf(user);
+  const staff = role === 'cashier' || role === 'supervisor';
+  const shiftsOn = staff && !!user?.shiftsEnabled;
+  const shiftQuery = useQuery({
+    queryKey: queryKeys.currentShift(),
+    queryFn: () => shiftsApi.current(),
+    enabled: shiftsOn,
+  });
+  const needsShift = shiftsOn && !shiftQuery.isLoading && !shiftQuery.data;
+
+  /** False, with a toast, when the ledger is closed to this user right now. */
+  const guardShift = () => {
+    if (!needsShift) return true;
+    toast.error('Open your shift first — expenses are counted against your drawer.');
+    return false;
+  };
+
   const [range, setRange] = useState('month');
   const [formOpen, setFormOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
@@ -92,6 +118,8 @@ export function ExpensesScreen() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    // The drawer's cash paid-out moved with it.
+    if (shiftsOn) queryClient.invalidateQueries({ queryKey: queryKeys.currentShift() });
   };
 
   const fail = (error: unknown, fallback: string) =>
@@ -168,6 +196,14 @@ export function ExpensesScreen() {
           }
           ListHeaderComponent={
             <View style={{ gap: theme.spacing.lg, marginBottom: theme.spacing.xs }}>
+              {/* Staff only: the owner has no drawer, and the bar hides itself when shifts are off. */}
+              {staff ? <ShiftBar /> : null}
+              {needsShift ? (
+                <Text variant="caption" color="mutedForeground">
+                  Expenses are counted against your drawer, so open your shift before recording,
+                  editing or deleting one.
+                </Text>
+              ) : null}
               <StatRow>
                 <StatCard
                   title="Today"
@@ -205,6 +241,7 @@ export function ExpensesScreen() {
                 icon={<Wallet size={28} color={theme.colors.mutedForeground} />}
                 actionLabel="Add Expense"
                 onAction={() => {
+                  if (!guardShift()) return;
                   setEditing(null);
                   setFormOpen(true);
                 }}
@@ -250,6 +287,7 @@ export function ExpensesScreen() {
                 <IconButton
                   accessibilityLabel={`Edit ${item.title}`}
                   onPress={() => {
+                    if (!guardShift()) return;
                     setEditing(item);
                     setFormOpen(true);
                   }}
@@ -259,7 +297,10 @@ export function ExpensesScreen() {
                 <IconButton
                   accessibilityLabel={`Delete ${item.title}`}
                   tone="destructive"
-                  onPress={() => setDeleting(item)}
+                  onPress={() => {
+                    if (!guardShift()) return;
+                    setDeleting(item);
+                  }}
                 >
                   <Trash2 size={16} color={theme.colors.destructive} />
                 </IconButton>
@@ -270,6 +311,7 @@ export function ExpensesScreen() {
 
         <Fab
           onPress={() => {
+            if (!guardShift()) return;
             setEditing(null);
             setFormOpen(true);
           }}

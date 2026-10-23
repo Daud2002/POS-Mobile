@@ -39,11 +39,11 @@ export function round2(n: number): number {
 }
 
 /**
- * What the delivery-charge box starts at on a new delivery. A house figure,
- * not a setting: the cashier overrides it per order when the distance or the
- * rider calls for it.
+ * What the delivery-charge box starts at on a new delivery: nothing. The
+ * cashier types the charge per order when the distance or the rider calls
+ * for one; a delivery with the box left alone is a free delivery.
  */
-export const DEFAULT_DELIVERY_CHARGE = 100;
+export const DEFAULT_DELIVERY_CHARGE = 0;
 
 /**
  * Parses the delivery-charge box. Blank means "no charge" rather than "keep
