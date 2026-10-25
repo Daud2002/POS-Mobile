@@ -11,6 +11,7 @@ import {
 import { apiClient, ApiError } from '@/api/client';
 import { authApi } from '@/api/services';
 import { AppUser } from '@/api/types';
+import { storage, StorageKey } from '@/lib/storage';
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -29,8 +30,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
+  /** Shows `profile` and remembers it for a start-up with no server to ask. */
+  const adopt = useCallback((profile: AppUser) => {
+    storage.setObject(StorageKey.authProfile, profile);
+    setUser(profile);
+  }, []);
+
   const clearSession = useCallback(async () => {
     setUser(null);
+    storage.remove(StorageKey.authProfile);
     await apiClient.clearToken();
   }, []);
 
@@ -63,9 +71,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const profile = await authApi.getProfile();
-        if (!cancelled) setUser(profile);
-      } catch {
+        if (!cancelled) adopt(profile);
+      } catch (error) {
+        if (error instanceof ApiError && error.isNetwork) {
+          // Unreachable is not signed out: keep the tokens, open on the last
+          // known profile, and let the next request find the server again.
+          const cached = storage.getObject<AppUser>(StorageKey.authProfile);
+          if (!cancelled && cached) setUser(cached);
+          return;
+        }
         // Expired or revoked token — drop it and show Login.
+        storage.remove(StorageKey.authProfile);
         await apiClient.clearToken();
       } finally {
         if (!cancelled) setLoading(false);
@@ -75,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [adopt]);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
@@ -86,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshToken) await apiClient.setRefreshToken(refreshToken);
       // The login response already carries storeId/currency/printerConfig, so
       // no second /auth/me call is needed here.
-      setUser(loggedIn);
+      adopt(loggedIn);
       return {};
     } catch (error) {
       if (error instanceof ApiError) {
@@ -99,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (__DEV__) console.error('[auth] login failed after request:', error);
       return { error: 'Unable to sign in. Please try again.' };
     }
-  }, []);
+  }, [adopt]);
 
   const logout = useCallback(async () => {
     // Revoke server-side first so the refresh token cannot outlive the
@@ -111,11 +127,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!apiClient.getToken()) return;
     try {
-      setUser(await authApi.getProfile());
+      adopt(await authApi.getProfile());
     } catch {
       // The 401 handler already clears the session if the token is dead.
     }
-  }, []);
+  }, [adopt]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

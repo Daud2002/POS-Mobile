@@ -1,4 +1,5 @@
-import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '@/constants/config';
+import { REQUEST_TIMEOUT_MS } from '@/constants/config';
+import { getApiBaseUrl } from '@/lib/apiBase';
 import { secureStorage } from '@/lib/secureStorage';
 
 export class ApiError extends Error {
@@ -12,6 +13,15 @@ export class ApiError extends Error {
 
   get isUnauthorized(): boolean {
     return this.status === 401;
+  }
+
+  /**
+   * The server could not be reached (status 0: offline, timed out, refused).
+   * Never a reason to end the session: a waiter whose phone loses the Wi-Fi
+   * for a minute must still be signed in when it comes back.
+   */
+  get isNetwork(): boolean {
+    return this.status === 0;
   }
 }
 
@@ -100,7 +110,11 @@ class ApiClient {
     this.onUnauthorized?.();
   }
 
-  /** Exchanges the refresh token for a new pair. Null means "session is over". */
+  /**
+   * Exchanges the refresh token for a new pair. Null means "session is over".
+   * Throws a network ApiError when the server could not be asked, which says
+   * nothing about the session.
+   */
   private async refreshAccessToken(): Promise<string | null> {
     if (!this.refreshInFlight) {
       // Cleanup goes on the OUTER promise via .finally(), not inside
@@ -120,31 +134,38 @@ class ApiClient {
   private async performRefresh(): Promise<string | null> {
     if (!this.refreshToken) return null;
 
+    let response: Response;
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: this.refreshToken }),
       });
-
-      if (!response.ok) return null;
-
-      const payload = safeParse(await response.text()) as {
-        accessToken?: string;
-        refreshToken?: string;
-      } | null;
-
-      if (!payload?.accessToken) return null;
-
-      await this.setToken(payload.accessToken);
-      // The server rotates on every refresh, so the previous one is dead.
-      if (payload.refreshToken) await this.setRefreshToken(payload.refreshToken);
-
-      return payload.accessToken;
     } catch {
       // Offline: keep the session and let the caller surface a network error.
-      return null;
+      // Returning null here used to end the session instead.
+      throw new ApiError('Could not reach the server. Check your connection.', 0);
     }
+
+    // A 5xx is the server failing (a store server mid-update, say), not a
+    // verdict on the refresh token. Only a 4xx means the session is over.
+    if (response.status >= 500) {
+      throw new ApiError('The server is not responding. Try again in a moment.', 0);
+    }
+    if (!response.ok) return null;
+
+    const payload = safeParse(await response.text()) as {
+      accessToken?: string;
+      refreshToken?: string;
+    } | null;
+
+    if (!payload?.accessToken) return null;
+
+    await this.setToken(payload.accessToken);
+    // The server rotates on every refresh, so the previous one is dead.
+    if (payload.refreshToken) await this.setRefreshToken(payload.refreshToken);
+
+    return payload.accessToken;
   }
 
   async request<T>(path: string, options: RequestOptions = {}, isRetry = false): Promise<T> {
@@ -162,7 +183,7 @@ class ApiClient {
 
     let response: Response;
     try {
-      response = await fetch(`${API_BASE_URL}${path}`, {
+      response = await fetch(`${getApiBaseUrl()}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -269,5 +290,5 @@ export const apiClient = new ApiClient();
 export function assetUrl(path?: string | null): string | undefined {
   if (!path) return undefined;
   if (/^https?:\/\//i.test(path)) return path;
-  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  return `${getApiBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
 }

@@ -1,4 +1,5 @@
 import { apiClient } from '../client';
+import { useApiBase } from '../../lib/apiBase';
 
 /**
  * Covers the refresh path that keeps a shift-long session alive.
@@ -118,5 +119,50 @@ describe('apiClient refresh', () => {
 
     await expect(apiClient.get('/auth/me')).resolves.toMatchObject({ ok: true });
     expect(server.refreshCount()).toBe(1);
+  });
+});
+
+describe('apiClient when the server cannot be reached', () => {
+  it('keeps the session when the refresh cannot be sent', async () => {
+    globalThis.fetch = jest.fn((url: string) =>
+      String(url).includes('/auth/refresh')
+        ? Promise.reject(new TypeError('Network request failed'))
+        : json(401, { message: 'Unauthorized' }),
+    ) as unknown as typeof fetch;
+    const onUnauthorized = jest.fn();
+    apiClient.setUnauthorizedHandler(onUnauthorized);
+
+    await expect(apiClient.get('/auth/me')).rejects.toMatchObject({ isNetwork: true });
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(apiClient.getRefreshToken()).toBe('refresh-1');
+  });
+
+  it('treats a 5xx on refresh as the server failing, not the session ending', async () => {
+    globalThis.fetch = jest.fn((url: string) =>
+      String(url).includes('/auth/refresh') ? json(502, { message: 'Bad gateway' }) : json(401, {}),
+    ) as unknown as typeof fetch;
+    const onUnauthorized = jest.fn();
+    apiClient.setUnauthorizedHandler(onUnauthorized);
+
+    await expect(apiClient.get('/auth/me')).rejects.toMatchObject({ isNetwork: true });
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(apiClient.getRefreshToken()).toBe('refresh-1');
+  });
+
+  it('sends requests to whichever server is current', async () => {
+    const original = useApiBase.getState().baseUrl;
+    const seen: string[] = [];
+    globalThis.fetch = jest.fn((url: string) => {
+      seen.push(String(url));
+      return json(200, { ok: true });
+    }) as unknown as typeof fetch;
+
+    useApiBase.getState().setBaseUrl('https://192.168.1.20/api/');
+    await apiClient.get('/health');
+
+    expect(seen).toEqual(['https://192.168.1.20/api/health']);
+    useApiBase.getState().setBaseUrl(original);
   });
 });

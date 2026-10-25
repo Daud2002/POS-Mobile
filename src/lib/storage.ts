@@ -13,6 +13,12 @@ export const StorageKey = {
   themeMode: 'theme.mode',
   printerProfile: 'printer.profile',
   cartDraft: 'pos.cartDraft',
+  /**
+   * The last /auth/me profile, so starting the app while the server is
+   * unreachable still opens on the signed-in screens. Not a credential: the
+   * tokens stay in secure storage and the server checks them on every call.
+   */
+  authProfile: 'auth.profile',
 } as const;
 
 export type StorageKeyName = (typeof StorageKey)[keyof typeof StorageKey];

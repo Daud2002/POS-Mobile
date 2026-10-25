@@ -468,7 +468,7 @@ export interface Store {
   phone?: string;
   email?: string;
   printerConfig?: string;
-  /** Server-relative; join onto API_BASE_URL before using it as an image src. */
+  /** Server-relative; join onto the active API base (assetUrl) before using it as an image src. */
   logoUrl?: string | null;
   /** Restaurant tenants only: cashiers must open a shift before settling. */
   shiftsEnabled?: boolean;

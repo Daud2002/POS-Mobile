@@ -1,9 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { apiClient } from '@/api/client';
-import { API_BASE_URL } from '@/constants/config';
-
-/** The gateway is mounted on the server root, not under the /api prefix. */
-const SOCKET_URL = API_BASE_URL.replace(/\/api\/?$/, '');
+import { getSocketUrl } from '@/lib/apiBase';
 
 export const RealtimeEvents = {
   orderCreated: 'order:created',
@@ -34,7 +31,7 @@ let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (socket) return socket;
 
-  socket = io(`${SOCKET_URL}/realtime`, {
+  socket = io(`${getSocketUrl()}/realtime`, {
     transports: ['websocket'], // RN has no long-polling fallback worth using
     auth: { token: apiClient.getToken() },
     reconnection: true,

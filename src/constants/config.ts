@@ -1,7 +1,9 @@
 import Constants from 'expo-constants';
 
 /**
- * Base URL of the NestJS API, including its `/api` global prefix.
+ * Base URL of the NestJS API this build ships with, including its `/api`
+ * global prefix. Requests read the current server from lib/apiBase.ts, which
+ * starts here and can move to a shop's store server at runtime.
  *
  * Mirrors the web app's `VITE_API_URL || 'http://localhost:3000/api'` fallback.
  * On Android emulators `localhost` points at the emulator itself, so the
