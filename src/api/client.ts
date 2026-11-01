@@ -1,11 +1,17 @@
 import { REQUEST_TIMEOUT_MS } from '@/constants/config';
 import { getApiBaseUrl } from '@/lib/apiBase';
+import { tokenScopeFor } from '@/lib/connection/tokenScope';
 import { secureStorage } from '@/lib/secureStorage';
 
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * The machine-readable reason some errors carry next to `message`, e.g.
+     * 'STORE_SERVER_MODE'. Screens branch on this, never on message text.
+     */
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -13,6 +19,15 @@ export class ApiError extends Error {
 
   get isUnauthorized(): boolean {
     return this.status === 401;
+  }
+
+  /**
+   * The cloud turned this away because the shop now runs on its own store
+   * server — including a staff sign-in. The fix is to connect to that server,
+   * not to retry here.
+   */
+  get isStoreServerMode(): boolean {
+    return this.code === 'STORE_SERVER_MODE';
   }
 
   /**
@@ -51,6 +66,8 @@ type UnauthorizedHandler = () => void;
 class ApiClient {
   private token: string | null = null;
   private refreshToken: string | null = null;
+  /** Secure-storage suffix of the server the two tokens above belong to. */
+  private scope = '';
   private onUnauthorized: UnauthorizedHandler | null = null;
 
   /**
@@ -61,10 +78,23 @@ class ApiClient {
    */
   private refreshInFlight: Promise<string | null> | null = null;
 
-  /** Loads the persisted tokens. Must be awaited once before the first request. */
-  async hydrate(): Promise<string | null> {
-    this.token = await secureStorage.getToken();
-    this.refreshToken = await secureStorage.getRefreshToken();
+  /**
+   * Loads the persisted tokens of one server — the current one unless told
+   * otherwise. Must be awaited once before the first request, and again
+   * before the app moves to another server (connectionStore.applyServer does
+   * this BEFORE switching the base URL, so no request ever pairs one server's
+   * address with another's token).
+   *
+   * Both reads finish before anything is assigned, so a request made while
+   * this runs still sees a matching token and scope.
+   */
+  async hydrate(baseUrl: string = getApiBaseUrl()): Promise<string | null> {
+    const scope = tokenScopeFor(baseUrl);
+    const token = await secureStorage.getToken(scope);
+    const refreshToken = await secureStorage.getRefreshToken(scope);
+    this.scope = scope;
+    this.token = token;
+    this.refreshToken = refreshToken;
     return this.token;
   }
 
@@ -74,7 +104,7 @@ class ApiClient {
 
   async setToken(token: string): Promise<void> {
     this.token = token;
-    await secureStorage.setToken(token);
+    await secureStorage.setToken(token, this.scope);
   }
 
   getRefreshToken(): string | null {
@@ -83,14 +113,15 @@ class ApiClient {
 
   async setRefreshToken(token: string): Promise<void> {
     this.refreshToken = token;
-    await secureStorage.setRefreshToken(token);
+    await secureStorage.setRefreshToken(token, this.scope);
   }
 
+  /** Signs out of the CURRENT server only; other servers' sessions are left alone. */
   async clearToken(): Promise<void> {
     this.token = null;
     this.refreshToken = null;
-    await secureStorage.clearToken();
-    await secureStorage.clearRefreshToken();
+    await secureStorage.clearToken(this.scope);
+    await secureStorage.clearRefreshToken(this.scope);
   }
 
   /**
@@ -134,9 +165,14 @@ class ApiClient {
   private async performRefresh(): Promise<string | null> {
     if (!this.refreshToken) return null;
 
+    // Pinned at the start: the app can move to another server while this is
+    // in flight, and the rotated pair must land with the server that issued it.
+    const scope = this.scope;
+    const baseUrl = getApiBaseUrl();
+
     let response: Response;
     try {
-      response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
+      response = await fetch(`${baseUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: this.refreshToken }),
@@ -160,6 +196,15 @@ class ApiClient {
     } | null;
 
     if (!payload?.accessToken) return null;
+
+    if (scope !== this.scope) {
+      // Switched servers mid-refresh. File the new pair under the old server
+      // (its previous refresh token is spent now) and leave the live session
+      // alone. A status-0 error makes the caller retry instead of signing out.
+      await secureStorage.setToken(payload.accessToken, scope);
+      if (payload.refreshToken) await secureStorage.setRefreshToken(payload.refreshToken, scope);
+      throw new ApiError('Switched server. Try again.', 0);
+    }
 
     await this.setToken(payload.accessToken);
     // The server rotates on every refresh, so the previous one is dead.
@@ -213,7 +258,11 @@ class ApiClient {
         }
         this.expireSession();
       }
-      throw new ApiError(extractMessage(payload) ?? 'Request failed', response.status);
+      throw new ApiError(
+        extractMessage(payload) ?? 'Request failed',
+        response.status,
+        extractCode(payload),
+      );
     }
 
     // NestJS returns bare objects here — there is no global response
@@ -265,6 +314,13 @@ function extractMessage(payload: unknown): string | null {
   if (typeof message === 'string') return message;
   if (Array.isArray(message) && message.length > 0) return String(message[0]);
   return null;
+}
+
+/** The `code` a few errors add beside `message` (the store-server 409s, for one). */
+function extractCode(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const code = (payload as { code?: unknown }).code;
+  return typeof code === 'string' && code ? code : undefined;
 }
 
 /** Builds a query string, skipping undefined values. */

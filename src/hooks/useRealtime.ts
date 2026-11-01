@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useApiBase } from '@/lib/apiBase';
 import { getSocket } from '@/lib/socket';
 
 /** Poll interval used only while the socket is down. */
@@ -27,6 +28,11 @@ export function useRealtime({ events, onChange, enabled = true }: UseRealtimeOpt
 
   const eventKey = events.join(',');
 
+  // Moving between the cloud and the store server drops the shared socket
+  // (connectionStore.applyServer). Tabs stay mounted across that, so they
+  // must re-attach to the new one rather than keep listening on a dead one.
+  const baseUrl = useApiBase((state) => state.baseUrl);
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -51,7 +57,7 @@ export function useRealtime({ events, onChange, enabled = true }: UseRealtimeOpt
       socket.off('connect_error', onDisconnect);
       for (const event of list) socket.off(event, handler);
     };
-  }, [eventKey, enabled]);
+  }, [eventKey, enabled, baseUrl]);
 
   useEffect(() => {
     if (!enabled || connected) return;

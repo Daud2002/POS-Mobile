@@ -5,12 +5,15 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
 import { apiClient, ApiError } from '@/api/client';
 import { authApi } from '@/api/services';
 import { AppUser } from '@/api/types';
+import { useApiBase } from '@/lib/apiBase';
+import { ensureInitialConnection } from '@/lib/connection/connectionStore';
 import { storage, StorageKey } from '@/lib/storage';
 
 interface AuthContextValue {
@@ -18,7 +21,12 @@ interface AuthContextValue {
   /** True until the boot-time token hydration + /auth/me round-trip completes. */
   loading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<{ error?: string }>;
+  /**
+   * `code` is the server's reason when it gave one — 'STORE_SERVER_MODE'
+   * means the cloud refused a staff sign-in and the phone should connect to
+   * the shop's store server instead.
+   */
+  login: (email: string, password: string) => Promise<{ error?: string; code?: string }>;
   logout: () => Promise<void>;
   /** Re-fetches /auth/me, e.g. after the store's currency changes. */
   refresh: () => Promise<void>;
@@ -52,37 +60,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => apiClient.setUnauthorizedHandler(null);
   }, [clearSession]);
 
+  /** Bumped per restore, so a slow /auth/me from the previous server can't land after a newer one. */
+  const restoreAttempt = useRef(0);
+  const booted = useRef(false);
+
   /**
-   * Boot: hydrate the stored token, then complete the /auth/me round-trip.
+   * Opens the session this device holds on the CURRENT server, using the
+   * tokens apiClient already loaded for it.
    *
-   * This round-trip is not optional — `storeId` is NOT in the JWT payload
-   * (which is only `{ email, sub, role }`); the backend grafts it on in
-   * getUserWithStore(). No store-scoped screen can render without it.
+   * The /auth/me round-trip is not optional — `storeId` is NOT in the JWT
+   * payload (which is only `{ email, sub, role }`); the backend grafts it on
+   * in getUserWithStore(). No store-scoped screen can render without it.
+   */
+  const restoreSession = useCallback(async () => {
+    const attempt = ++restoreAttempt.current;
+    const stale = () => attempt !== restoreAttempt.current;
+
+    if (!apiClient.getToken()) {
+      // Sessions are per server: none here means sign in here, even if the
+      // device is signed in on another one.
+      if (!stale()) setUser(null);
+      return;
+    }
+
+    try {
+      const profile = await authApi.getProfile();
+      if (!stale()) adopt(profile);
+    } catch (error) {
+      if (stale()) return;
+      if (error instanceof ApiError && (error.isNetwork || error.status >= 500)) {
+        // Unreachable is not signed out: keep the tokens, open on the last
+        // known profile, and let the next request find the server again. A
+        // 5xx counts too — a store server mid-update is failing, not saying
+        // the session is over (the refresh path reads it the same way).
+        const cached = storage.getObject<AppUser>(StorageKey.authProfile);
+        if (cached) setUser(cached);
+        return;
+      }
+      // Expired or revoked token — drop it and show Login.
+      storage.remove(StorageKey.authProfile);
+      await apiClient.clearToken();
+      setUser(null);
+    }
+  }, [adopt]);
+
+  /**
+   * Boot: settle which server to use (and load its tokens), then restore the
+   * session there. The server comes first because a staff phone in a shop
+   * running on a store server must never ask the cloud, which refuses staff.
    */
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      const token = await apiClient.hydrate();
-      if (!token) {
-        if (!cancelled) setLoading(false);
-        return;
-      }
-
       try {
-        const profile = await authApi.getProfile();
-        if (!cancelled) adopt(profile);
-      } catch (error) {
-        if (error instanceof ApiError && error.isNetwork) {
-          // Unreachable is not signed out: keep the tokens, open on the last
-          // known profile, and let the next request find the server again.
-          const cached = storage.getObject<AppUser>(StorageKey.authProfile);
-          if (!cancelled && cached) setUser(cached);
-          return;
-        }
-        // Expired or revoked token — drop it and show Login.
-        storage.remove(StorageKey.authProfile);
-        await apiClient.clearToken();
+        await ensureInitialConnection();
+        if (cancelled) return;
+        // Set before restoring, so a server switch from here on runs its own
+        // restore, which supersedes this one.
+        booted.current = true;
+        await restoreSession();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -91,7 +128,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [adopt]);
+  }, [restoreSession]);
+
+  // The app moved between the cloud and the store server. connectionStore
+  // has already loaded that server's tokens; open (or ask for) its session.
+  useEffect(
+    () =>
+      useApiBase.subscribe((state, previous) => {
+        if (booted.current && state.baseUrl !== previous.baseUrl) void restoreSession();
+      }),
+    [restoreSession],
+  );
 
   const login = useCallback(async (email: string, password: string) => {
     try {
@@ -106,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return {};
     } catch (error) {
       if (error instanceof ApiError) {
-        return { error: error.message };
+        return { error: error.message, code: error.code };
       }
 
       // Anything that is not an ApiError means the request succeeded and

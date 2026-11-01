@@ -35,6 +35,18 @@ export type RootStackParamList = {
   Settings: undefined;
   PrinterSetup: undefined;
   ChangePassword: undefined;
+  /** Pair with / check / forget the shop's store server. Also in the signed-out stack. */
+  ConnectStoreServer: undefined;
+};
+
+/**
+ * Signed out. The connect screen is here too: a staff phone has to reach the
+ * store server BEFORE it can sign in, because the cloud refuses staff once
+ * the shop runs on one.
+ */
+export type AuthStackParamList = {
+  Login: undefined;
+  ConnectStoreServer: undefined;
 };
 
 /**

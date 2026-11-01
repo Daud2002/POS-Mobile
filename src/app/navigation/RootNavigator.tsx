@@ -1,5 +1,8 @@
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import {
+  createNativeStackNavigator,
+  type NativeStackNavigationOptions,
+} from '@react-navigation/native-stack';
 import { View } from 'react-native';
 
 import { useAuth } from '@/app/providers/AuthProvider';
@@ -21,14 +24,15 @@ import { CashiersScreen } from '@/features/shifts/screens/CashiersScreen';
 import { ShiftsScreen } from '@/features/shifts/screens/ShiftsScreen';
 import { ShiftDetailScreen } from '@/features/shifts/screens/ShiftDetailScreen';
 import { LoginScreen } from '@/features/auth/screens/LoginScreen';
+import { ConnectStoreServerScreen } from '@/features/storeServer/screens/ConnectStoreServerScreen';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { MainTabs } from './MainTabs';
 import { toNavigationTheme } from './navigationTheme';
-import { RootStackParamList } from './types';
+import { AuthStackParamList, RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const AuthStack = createNativeStackNavigator();
+const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 
 /**
  * Auth gate + app stack.
@@ -41,6 +45,24 @@ export function RootNavigator() {
   const { isAuthenticated, loading } = useAuth();
 
   const navTheme = toNavigationTheme(theme);
+
+  const pushedScreen: NativeStackNavigationOptions = {
+    // Pushed screens slide in from the right on native. On web the
+    // native-stack has no transitions, so PageFade inside each screen
+    // carries the entrance there.
+    animation: 'slide_from_right',
+    // Header matches the page background so screens read as one
+    // surface instead of a bar bolted on top.
+    headerStyle: { backgroundColor: theme.colors.background },
+    headerTintColor: theme.colors.foreground,
+    headerTitleStyle: {
+      fontFamily: theme.fontFamily.heading,
+      fontSize: theme.fontSize.md,
+    },
+    headerShadowVisible: false,
+    headerBackButtonDisplayMode: 'minimal',
+    contentStyle: { backgroundColor: theme.colors.background },
+  };
 
   // Held until the stored token is hydrated AND /auth/me has returned, because
   // `storeId` arrives with the profile and every store-scoped screen needs it.
@@ -63,23 +85,7 @@ export function RootNavigator() {
     <NavigationContainer theme={navTheme}>
       {isAuthenticated ? (
         <Stack.Navigator
-          screenOptions={{
-            // Pushed screens slide in from the right on native. On web the
-            // native-stack has no transitions, so PageFade inside each screen
-            // carries the entrance there.
-            animation: 'slide_from_right',
-            // Header matches the page background so screens read as one
-            // surface instead of a bar bolted on top.
-            headerStyle: { backgroundColor: theme.colors.background },
-            headerTintColor: theme.colors.foreground,
-            headerTitleStyle: {
-              fontFamily: theme.fontFamily.heading,
-              fontSize: theme.fontSize.md,
-            },
-            headerShadowVisible: false,
-            headerBackButtonDisplayMode: 'minimal',
-            contentStyle: { backgroundColor: theme.colors.background },
-          }}
+          screenOptions={pushedScreen}
         >
           <Stack.Screen
             name="MainTabs"
@@ -175,10 +181,20 @@ export function RootNavigator() {
             component={ChangePasswordScreen}
             options={{ title: 'Change Password' }}
           />
+          <Stack.Screen
+            name="ConnectStoreServer"
+            component={ConnectStoreServerScreen}
+            options={{ title: 'Store Server' }}
+          />
         </Stack.Navigator>
       ) : (
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>
           <AuthStack.Screen name="Login" component={LoginScreen} />
+          <AuthStack.Screen
+            name="ConnectStoreServer"
+            component={ConnectStoreServerScreen}
+            options={{ ...pushedScreen, headerShown: true, title: 'Store Server' }}
+          />
         </AuthStack.Navigator>
       )}
     </NavigationContainer>

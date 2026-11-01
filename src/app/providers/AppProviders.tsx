@@ -8,6 +8,7 @@ import { ApiError } from '@/api/client';
 import { ThemeProvider } from '@/theme/ThemeProvider';
 
 import { AuthProvider } from './AuthProvider';
+import { ConnectionProvider } from './ConnectionProvider';
 
 function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -35,7 +36,8 @@ function createQueryClient(): QueryClient {
  * The provider stack.
  *
  * Order matters: Theme is outermost so every provider below can read tokens;
- * Auth sits inside Query so hooks can invalidate caches on logout.
+ * Auth sits inside Query so hooks can invalidate caches on logout; Connection
+ * sits inside Auth because its owner prompt needs the signed-in user.
  *
  * React Query is adopted properly here — it is a dependency of the web app but
  * completely unused there, where every screen re-implements load/loading/error
@@ -50,7 +52,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <ThemeProvider>
           <ToastProvider>
             <QueryClientProvider client={queryClient}>
-              <AuthProvider>{children}</AuthProvider>
+              <AuthProvider>
+                <ConnectionProvider>{children}</ConnectionProvider>
+              </AuthProvider>
             </QueryClientProvider>
           </ToastProvider>
         </ThemeProvider>

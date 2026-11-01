@@ -9,4 +9,5 @@ export { productsApi } from './products.api';
 export { reportsApi } from './reports.api';
 export { restaurantApi } from './restaurant.api';
 export { shiftsApi } from './shifts.api';
+export { storeServersApi } from './storeServers.api';
 export { storesApi } from './stores.api';

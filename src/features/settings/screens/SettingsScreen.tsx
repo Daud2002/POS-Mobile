@@ -7,6 +7,7 @@ import {
   Monitor,
   Moon,
   Printer,
+  Server,
   Sun,
 } from 'lucide-react-native';
 import { useState } from 'react';
@@ -14,6 +15,8 @@ import { Image, StyleSheet, View } from 'react-native';
 
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
+import { serverLabel } from '@/lib/connection/qr';
+import { useConnection } from '@/lib/connection/useConnection';
 import { effectiveRoleOf } from '@/lib/roles';
 import { assetUrl } from '@/api/client';
 import { Screen } from '@/components/layout/Screen';
@@ -53,6 +56,17 @@ export function SettingsScreen() {
   const printer = usePrinterStore((state) => state.profile);
   // Everyone except a restaurant waiter has a reason to bind a printer.
   const canPrint = effectiveRoleOf(user) !== 'waiter';
+  const connection = useConnection();
+  // Store servers are a restaurant feature; anyone already paired still needs
+  // the row to check or forget it.
+  const showStoreServer = user?.accountType === 'restaurant' || !!connection.registered;
+  const storeServerDescription = !connection.registered
+    ? 'Not set up · keep working without internet'
+    : connection.mode === 'store'
+      ? `Connected · ${serverLabel(connection.baseUrl)}`
+      : connection.mode === 'unreachable'
+        ? `Can't reach · ${serverLabel(connection.registered.baseUrl)}`
+        : 'Using the cloud · used when in the shop';
 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [logoBroken, setLogoBroken] = useState(false);
@@ -141,6 +155,36 @@ export function SettingsScreen() {
           />
         </Card>
       </View>
+
+      {showStoreServer && (
+        <View style={{ gap: theme.spacing.md }}>
+          <Text variant="overline" color="mutedForeground">
+            Shop network
+          </Text>
+
+          <Card padding="none">
+            <SettingsRow
+              icon={
+                <Server
+                  size={18}
+                  color={
+                    connection.mode === 'unreachable'
+                      ? theme.colors.destructive
+                      : theme.colors.info
+                  }
+                />
+              }
+              color={
+                connection.mode === 'unreachable' ? theme.colors.destructive : theme.colors.info
+              }
+              label="Store Server"
+              description={storeServerDescription}
+              onPress={() => navigation.navigate('ConnectStoreServer')}
+              trailing={<ChevronRight size={18} color={theme.colors.mutedForeground} />}
+            />
+          </Card>
+        </View>
+      )}
 
       {/*
         Waiters never print: tickets come out at the kitchen station and

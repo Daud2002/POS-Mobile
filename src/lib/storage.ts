@@ -19,6 +19,11 @@ export const StorageKey = {
    * tokens stay in secure storage and the server checks them on every call.
    */
   authProfile: 'auth.profile',
+  /**
+   * The shop's store server this device found (lib/connection/registry.ts):
+   * addresses and certificate fingerprint only, never a credential.
+   */
+  storeServer: 'connection.storeServer',
 } as const;
 
 export type StorageKeyName = (typeof StorageKey)[keyof typeof StorageKey];

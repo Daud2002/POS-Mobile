@@ -1,5 +1,12 @@
 import type { ExpoConfig } from 'expo/config';
 
+/** Shared by the infoPlist and the expo-camera plugin, which writes the same key. */
+const CAMERA_PURPOSE =
+  "TapnTrade uses the camera to scan product barcodes and your shop's setup QR code.";
+
+const LOCAL_NETWORK_PURPOSE =
+  "TapNtrade connects to your shop's store server on the local Wi-Fi.";
+
 /**
  * Expo app configuration.
  *
@@ -27,8 +34,17 @@ const config: ExpoConfig = {
       // printers do not have. See PrinterSetupScreen for the platform gating.
       NSBluetoothAlwaysUsageDescription:
         'TapnTrade connects to your Bluetooth receipt printer to print sales receipts.',
-      NSCameraUsageDescription:
-        'TapnTrade uses the camera to scan product barcodes at checkout.',
+      NSCameraUsageDescription: CAMERA_PURPOSE,
+      /**
+       * Staff phones talk to the shop's store server on the cashier PC over
+       * the shop Wi-Fi; iOS asks the user first, with this text.
+       *
+       * ios/ is hand-patched (SceneDelegate for the iOS 27 lifecycle) and is
+       * never regenerated, so any change here must be copied into
+       * ios/TapnTrade/Info.plist by hand. Do NOT run `expo prebuild --clean`
+       * for iOS.
+       */
+      NSLocalNetworkUsageDescription: LOCAL_NETWORK_PURPOSE,
     },
   },
 
@@ -95,9 +111,12 @@ const config: ExpoConfig = {
     [
       'expo-camera',
       {
-        cameraPermission: 'TapnTrade uses the camera to scan product barcodes.',
+        cameraPermission: CAMERA_PURPOSE,
       },
     ],
+    // Trust the shop certificate users install for their store server
+    // (Android ignores user CAs otherwise). See the plugin for details.
+    './plugins/withUserCaTrust',
   ],
 
   extra: {
