@@ -33,10 +33,7 @@ export const restaurantApi = {
     return apiClient.delete<{ message: string }>(`/restaurant/tables/${id}`);
   },
 
-  /**
-   * For a cashier the server omits bills another cashier has printed — a
-   * printed bill belongs to the till that printed it.
-   */
+  /** Every role sees every order its filters ask for, whichever till printed it. */
   listOrders(
     params: { orderStatus?: string; orderType?: string; tableId?: string; billPrinted?: 'true' | 'false' } = {},
   ) {
@@ -88,18 +85,23 @@ export const restaurantApi = {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/punch`, { tableId });
   },
 
-  /** Appends a round; the kitchen ticket contains only the new lines. */
-  addItems(id: string, items: RestaurantOrderItemPayload[]) {
-    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items });
+  /**
+   * Appends a round; the kitchen ticket contains only the new lines.
+   * `sendToKitchen: false` is the till's "Print bill & update": the lines are
+   * billed but never reach the kitchen. The server ignores it for waiters.
+   */
+  addItems(id: string, items: RestaurantOrderItemPayload[], options: { sendToKitchen?: boolean } = {}) {
+    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items`, { items, ...options });
   },
 
   /**
-   * Strikes lines (or part of a line) off a live order. Cashier or owner
-   * only, and only on a bill this till holds. The kitchen gets a cancellation
-   * ticket for anything it had not yet handed over; the bill wants reprinting.
+   * Strikes lines (or part of a line) off a live order — a waiter at the
+   * table or any till. The kitchen gets a cancellation ticket for anything it
+   * had not yet handed over (unless the till sends `sendToKitchen: false`);
+   * the bill wants reprinting, and a waiter's removal clears its "printed" mark.
    */
-  removeItems(id: string, items: RemoveOrderItemPayload[]) {
-    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items/remove`, { items });
+  removeItems(id: string, items: RemoveOrderItemPayload[], options: { sendToKitchen?: boolean } = {}) {
+    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/items/remove`, { items, ...options });
   },
 
   /** The order's audit trail: original lines, every change, every print. */

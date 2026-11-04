@@ -18,6 +18,7 @@ import { OrderCompleteScreen } from '@/features/pos/screens/OrderCompleteScreen'
 import { PrinterSetupScreen } from '@/features/printing/screens/PrinterSetupScreen';
 import { ProductsScreen } from '@/features/products/screens/ProductsScreen';
 import { ReportsScreen } from '@/features/reports/screens/ReportsScreen';
+import { ItemSalesScreen } from '@/features/restaurant/screens/ItemSalesScreen';
 import { ChangePasswordScreen } from '@/features/settings/screens/ChangePasswordScreen';
 import { SettingsScreen } from '@/features/settings/screens/SettingsScreen';
 import { CashiersScreen } from '@/features/shifts/screens/CashiersScreen';
@@ -148,6 +149,11 @@ export function RootNavigator() {
             name="Expenses"
             component={ExpensesScreen}
             options={{ title: 'Expenses' }}
+          />
+          <Stack.Screen
+            name="ItemSales"
+            component={ItemSalesScreen}
+            options={{ title: 'Item Sales' }}
           />
 
           <Stack.Screen

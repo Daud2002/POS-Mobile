@@ -24,6 +24,8 @@ export type RootStackParamList = {
   Employees: undefined;
   Reports: undefined;
   Expenses: undefined;
+  /** Restaurant: quantity and sales per menu item, per day or month. */
+  ItemSales: undefined;
 
   // Cashier shifts (owner). `Shifts` narrows to one cashier when pushed from
   // the Cashiers summary.

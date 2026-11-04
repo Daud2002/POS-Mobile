@@ -31,7 +31,14 @@ import { categorySkipsKitchen } from '@/lib/kitchen';
 import { orderDisplayStatus, orderStatusLabel } from '@/lib/orderLabel';
 import { sortBySortOrder } from '@/lib/sortOrder';
 import { tint, useTheme } from '@/theme';
-import type { Category, Decimal, Product, RestaurantOrder, RestaurantTable } from '@/api/types';
+import type {
+  Category,
+  Decimal,
+  Product,
+  RestaurantOrder,
+  RestaurantOrderItem,
+  RestaurantTable,
+} from '@/api/types';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 
 interface CartLine {
@@ -78,6 +85,12 @@ export function WaiterScreen() {
   /** The draft the waiter has asked to bin, pending confirmation. */
   const [discarding, setDiscarding] = useState<RestaurantOrder | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  /**
+   * Lines of `appendTo` the waiter is striking off, and how many of each —
+   * the customer changed their mind. Staged like the cashier's edit and sent
+   * with the round; the order's history records who struck what.
+   */
+  const [removals, setRemovals] = useState<Record<string, number>>({});
   const [openCategory, setOpenCategory] = useState<Category | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
 
@@ -168,6 +181,7 @@ export function WaiterScreen() {
     setEditingDraft(null);
     setSelectedTable(null);
     setCart([]);
+    setRemovals({});
     navigation.setParams({ appendToOrderId: undefined });
     scrollToMenu();
   }, [handoff, liveOrders, navigation, scrollToMenu]);
@@ -241,8 +255,30 @@ export function WaiterScreen() {
   const qtyOf = (productId: string) =>
     cart.find((l) => l.productId === productId)?.quantity ?? 0;
 
+  /** The open order being added to, as freshly listed — other devices change it too. */
+  const appendOrder = appendTo ? (liveOrders.find((o) => o.id === appendTo.id) ?? appendTo) : null;
+  const toRemove = Object.entries(removals)
+    .filter(([, quantity]) => quantity > 0)
+    .map(([orderItemId, quantity]) => ({ orderItemId, quantity }));
+  const hasRemovals = toRemove.length > 0;
+  /** Units still on the order once the staged removals go through. */
+  const remainingCount = (appendOrder?.items ?? []).reduce(
+    (n, i) => n + Math.max(toNumber(i.quantity) - (removals[i.id] ?? 0), 0),
+    0,
+  );
+
+  const removeOne = (item: RestaurantOrderItem) =>
+    setRemovals((prev) => ({
+      ...prev,
+      [item.id]: Math.min((prev[item.id] ?? 0) + 1, toNumber(item.quantity)),
+    }));
+
+  const restoreOne = (item: RestaurantOrderItem) =>
+    setRemovals((prev) => ({ ...prev, [item.id]: Math.max((prev[item.id] ?? 0) - 1, 0) }));
+
   const reset = () => {
     setCart([]);
+    setRemovals({});
     setSelectedTable(null);
     setAppendTo(null);
     setEditingDraft(null);
@@ -275,7 +311,7 @@ export function WaiterScreen() {
     );
 
   const submit = async (asDraft: boolean) => {
-    if (!cart.length) {
+    if (!cart.length && !(appendTo && hasRemovals)) {
       toast.error('Add at least one item');
       return;
     }
@@ -283,17 +319,32 @@ export function WaiterScreen() {
       toast.error('Pick a table first');
       return;
     }
+    // The server refuses to empty an order; cancelling one is the cashier's.
+    if (appendTo && hasRemovals && remainingCount === 0 && !cart.length) {
+      toast.error('That would leave nothing on the order — ask the cashier to cancel this order');
+      return;
+    }
 
     setSubmitting(true);
+    let added = false;
     try {
       if (appendTo) {
-        // The kitchen gets a ticket with only these lines — and none at all
-        // when the round is drinks alone.
-        await restaurantApi.addItems(appendTo.id, itemsPayload());
+        const table = appendTo.tableName ?? 'order';
+        // Additions first, so every original line can be swapped out: the
+        // server refuses a removal that would leave nothing. The kitchen gets
+        // a ticket with only the new lines — and none at all when the round is
+        // drinks alone — and a cancellation ticket for struck dishes it was
+        // still cooking.
+        if (cart.length) {
+          await restaurantApi.addItems(appendTo.id, itemsPayload());
+          added = true;
+        }
+        if (hasRemovals) await restaurantApi.removeItems(appendTo.id, toRemove);
+        const verb = cart.length && hasRemovals ? 'Updated' : cart.length ? 'Added to' : 'Removed from';
         toast.success(
           appendTo.billPrinted
-            ? `Added to ${appendTo.tableName ?? 'order'} — the cashier will reprint the bill`
-            : `Added to ${appendTo.tableName ?? 'order'}`,
+            ? `${verb} ${table} — the cashier will reprint the bill`
+            : `${verb} ${table}`,
         );
       } else if (editingDraft) {
         await restaurantApi.updateDraft(editingDraft.id, {
@@ -325,9 +376,15 @@ export function WaiterScreen() {
       reset();
       refresh();
     } catch (error: any) {
-      // A 409 means another waiter claimed the table first. The cart survives
-      // so the order can simply be re-aimed at a different table.
-      toast.error(error?.message ?? 'Could not send the order');
+      if (added) {
+        // The round landed; only the removals did not.
+        toast.error(`Dishes were added, but not removed: ${error?.message ?? 'unknown error'}`);
+        reset();
+      } else {
+        // A 409 means another waiter claimed the table first. The cart survives
+        // so the order can simply be re-aimed at a different table.
+        toast.error(error?.message ?? 'Could not send the order');
+      }
       refresh();
     } finally {
       setSubmitting(false);
@@ -392,13 +449,19 @@ export function WaiterScreen() {
        * would just eat screen height on a phone.
        */
       footer={
-        cart.length ? (
+        cart.length || appendTo ? (
           <View style={styles.footerBar}>
             <Button
               style={{ flex: 1 }}
               onPress={() => setReviewOpen(true)}
               icon={<ClipboardList size={16} color={theme.colors.primaryForeground} />}
-              label={`Review · ${cartCount} item${cartCount === 1 ? '' : 's'} · ${format(cartTotal)}`}
+              label={
+                cart.length
+                  ? `Review · ${cartCount} item${cartCount === 1 ? '' : 's'} · ${format(cartTotal)}`
+                  : // Adding to an open order with nothing picked yet: the
+                    // sheet is also where its lines can be struck off.
+                    `Review ${appendTo?.tableName ?? 'order'}`
+              }
             />
             {/* Fixed-width neighbour, so the Review button keeps one width
                 however long its item-count/total label grows. */}
@@ -429,12 +492,14 @@ export function WaiterScreen() {
                 onPress={() => {
                   if (free) {
                     setAppendTo(null);
+                    setRemovals({});
                     const next = selected ? null : table;
                     setSelectedTable(next);
                     // Deselecting should not yank the waiter down the page.
                     if (next) scrollToMenu();
                   } else if (live) {
                     // Occupied: this becomes an extra round on the open order.
+                    if (appendTo?.id !== live.id) setRemovals({});
                     setAppendTo(live);
                     setEditingDraft(null);
                     setSelectedTable(null);
@@ -624,21 +689,30 @@ export function WaiterScreen() {
       <Sheet
         open={reviewOpen}
         onClose={() => setReviewOpen(false)}
-        title={appendTo ? 'Add a round' : editingDraft ? 'Edit draft' : 'Review order'}
+        title={appendTo ? 'Edit order' : editingDraft ? 'Edit draft' : 'Review order'}
         description={destination}
         footer={
           <View style={{ flex: 1, gap: theme.spacing.sm }}>
             <Button
               onPress={() => submit(false)}
               loading={submitting}
-              disabled={!cart.length}
+              disabled={!cart.length && !(appendTo && hasRemovals)}
               icon={<Send size={16} color={theme.colors.primaryForeground} />}
               label={
                 appendTo
-                  ? needsKitchen ? 'Send round to kitchen' : 'Add to order'
+                  ? !cart.length
+                    ? 'Remove from order'
+                    : needsKitchen
+                      ? hasRemovals ? 'Update order & send round' : 'Send round to kitchen'
+                      : hasRemovals ? 'Update order' : 'Add to order'
                   : needsKitchen ? 'Send to kitchen' : 'Place order'
               }
             />
+            {appendTo && hasRemovals && remainingCount === 0 && !cart.length && (
+              <Text variant="caption" style={{ color: theme.colors.destructive }}>
+                That would leave nothing on the order — ask the cashier to cancel this order.
+              </Text>
+            )}
             {!appendTo && (
               <>
                 <Button
@@ -690,10 +764,79 @@ export function WaiterScreen() {
           </View>
         )}
 
+        {/*
+          What is already on the open order. − strikes one off (the customer
+          changed their mind); the cashier sees the change, and the order's
+          history records who made it.
+        */}
+        {appendOrder && (
+          <View style={{ gap: theme.spacing.xs }}>
+            <Text variant="caption" color="mutedForeground" style={{ textTransform: 'uppercase' }}>
+              On this order
+            </Text>
+            {(appendOrder.items ?? []).map((item) => {
+              const removing = removals[item.id] ?? 0;
+              const left = Math.max(toNumber(item.quantity) - removing, 0);
+              return (
+                <View key={item.id} style={styles.cartRow}>
+                  <Text
+                    variant="body"
+                    style={[
+                      { flex: 1 },
+                      left === 0
+                        ? { textDecorationLine: 'line-through', color: theme.colors.mutedForeground }
+                        : null,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {left} × {item.productName}
+                    {removing > 0 && left > 0 ? (
+                      <Text variant="caption" style={{ color: theme.colors.destructive }}>
+                        {'  '}(−{removing})
+                      </Text>
+                    ) : null}
+                  </Text>
+                  <View style={styles.stepper}>
+                    <Pressable
+                      onPress={() => removeOne(item)}
+                      disabled={left === 0}
+                      hitSlop={8}
+                      accessibilityLabel={`Remove one ${item.productName}`}
+                      style={{ opacity: left === 0 ? 0.4 : 1 }}
+                    >
+                      <Minus size={16} color={theme.colors.destructive} />
+                    </Pressable>
+                    {removing > 0 && (
+                      <Pressable
+                        onPress={() => restoreOne(item)}
+                        hitSlop={8}
+                        accessibilityLabel={`Keep one ${item.productName}`}
+                      >
+                        <Plus size={16} color={theme.colors.foreground} />
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+            {cart.length > 0 && (
+              <Text
+                variant="caption"
+                color="mutedForeground"
+                style={{ textTransform: 'uppercase', marginTop: theme.spacing.sm }}
+              >
+                Adding
+              </Text>
+            )}
+          </View>
+        )}
+
         {cart.length === 0 ? (
-          <Text variant="caption" color="mutedForeground" style={{ paddingVertical: theme.spacing.xl }}>
-            Nothing added yet.
-          </Text>
+          appendOrder ? null : (
+            <Text variant="caption" color="mutedForeground" style={{ paddingVertical: theme.spacing.xl }}>
+              Nothing added yet.
+            </Text>
+          )
         ) : (
           <View style={{ gap: theme.spacing.md }}>
             {cart.map((line) => (
@@ -768,7 +911,7 @@ export function WaiterScreen() {
         )}
 
         <View style={[styles.totalRow, { borderColor: theme.colors.border }]}>
-          <Text variant="bodySemibold">Total</Text>
+          <Text variant="bodySemibold">{appendTo ? 'This round' : 'Total'}</Text>
           <Text variant="bodySemibold">{format(cartTotal)}</Text>
         </View>
       </Sheet>

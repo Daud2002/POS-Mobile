@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Pencil, Save, Undo2,
+  Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Pencil, ChefHat, Undo2,
 } from 'lucide-react-native';
 
 import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from '@/api/services';
@@ -41,7 +41,9 @@ import {
   type SplitMethod,
   type SplitText,
 } from '@/lib/payment';
+import { effectiveRoleOf } from '@/lib/roles';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
+import { ShiftBar } from '@/features/shifts/components/ShiftBar';
 import { receiptFromRestaurantOrder } from '@/features/printing/templates/receiptFromOrder';
 import { tint, useTheme } from '@/theme';
 import type { Decimal, RestaurantOrder, RestaurantOrderItem } from '@/api/types';
@@ -145,18 +147,20 @@ export function RestaurantCashierScreen() {
   /**
    * Editing the lines of the selected order. Removals are staged per line
    * (how many to take off); additions are their own cart. Nothing is sent
-   * until "Update order".
+   * until one of the two save buttons.
    */
   const [editing, setEditing] = useState(false);
   const [removals, setRemovals] = useState<Record<string, number>>({});
   const [additions, setAdditions] = useState<CartLine[]>([]);
   const [saving, setSaving] = useState(false);
+  /** Which save button is running, for its spinner. */
+  const [sendingToKitchen, setSendingToKitchen] = useState<boolean | null>(null);
   /**
-   * The lines changed AFTER this till printed the bill, so the paper in the
-   * customer's hand is wrong. Updating and printing are two separate taps —
-   * the update goes to the kitchen at once, the bill prints when the cashier
-   * is ready — and this is what keeps the print button in front of them in
-   * between. Cleared by the next print, or by moving to another order.
+   * The lines changed AFTER the bill was printed, so the paper in the
+   * customer's hand is wrong. Saving an edit prints straight away, so this
+   * only stays set when that print failed — it keeps the Reprint button in
+   * front of the cashier. Cleared by the next print, or by moving to another
+   * order.
    */
   const [billStale, setBillStale] = useState(false);
 
@@ -171,6 +175,14 @@ export function RestaurantCashierScreen() {
   });
   const shift = shiftQuery.data ?? null;
   const shiftBlocked = !!user?.shiftsEnabled && !shift;
+  /**
+   * Cashiers and supervisors need the drawer open for everything else that
+   * changes what the till will collect too — punching, editing, printing and
+   * cancelling; the server answers 409 without one. Owners only need it to
+   * settle, which `shiftBlocked` covers.
+   */
+  const role = effectiveRoleOf(user);
+  const tillBlocked = shiftBlocked && (role === 'cashier' || role === 'supervisor');
 
   // Takeaway / delivery composer — the cashier's own order entry.
   const [composerOpen, setComposerOpen] = useState(false);
@@ -201,7 +213,7 @@ export function RestaurantCashierScreen() {
     queryKey: queryKeys.restaurantOrders('open'),
     queryFn: () =>
       restaurantApi
-        // The server already omits bills other cashiers have printed.
+        // Every open order in the restaurant, whichever till printed it.
         .listOrders({ orderStatus: 'requested,preparing,handed_over,draft' })
         .then((rows) =>
           [...rows].sort(
@@ -492,20 +504,26 @@ export function RestaurantCashierScreen() {
   };
 
   /**
-   * Prints, or reprints, the bill with the discount and charge as they stand
-   * in the boxes. The server fixes the figures and marks the order "bill
-   * printed" by this cashier; the paper is printed from what it returns.
+   * Prints, or reprints, `order`'s bill with the discount and charge as they
+   * stand in the boxes. The server fixes the figures and marks the order
+   * "bill printed" by this cashier; the paper is printed from what it
+   * returns. Throws when the server refuses.
    */
+  const printOrderBill = async (order: RestaurantOrder) => {
+    const bill = await restaurantApi.printBill(order.id, billFigures(order.orderType));
+    await printPaper(bill);
+    setSelected(bill);
+    setBillStale(false);
+    refresh();
+    return bill;
+  };
+
   const printBill = async () => {
     if (!selected) return;
     setPrinting(true);
     try {
-      const bill = await restaurantApi.printBill(selected.id, billFigures(selected.orderType));
-      await printPaper(bill);
+      await printOrderBill(selected);
       toast.success(billPrinted ? 'Bill reprinted' : 'Bill printed — mark it paid once the money is in');
-      setSelected(bill);
-      setBillStale(false);
-      refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to print the bill');
     } finally {
@@ -529,23 +547,21 @@ export function RestaurantCashierScreen() {
    * Sends the staged edits — and only the edits. Additions go first so an
    * order can have every original line replaced: the server refuses a
    * removal that would leave nothing, and it sees the additions before it
-   * does. The kitchen hears about the change on the spot (a round ticket, or
-   * a cancellation ticket for anything it was still cooking).
+   * does. With `sendToKitchen` the kitchen hears about the change on the
+   * spot (a round ticket, or a cancellation ticket for anything it was still
+   * cooking); without it, the change stays at the counter.
    *
-   * Printing is deliberately NOT part of this. The bill comes out on its own
-   * button, when the cashier asks for it — a waiter's table is often updated
-   * several times before anyone wants paper — so after a successful update
-   * the print button simply takes this button's place.
+   * Returns the updated order, or null when nothing (or only half) landed.
    *
    * The selected order may be swapped for a fresh copy mid-sequence (each
    * step raises order:updated and the list refetches), which is why the id
    * and the staged data are captured up front rather than read from state.
    */
-  const saveEdits = async () => {
-    if (!selected || !hasItemChanges) return;
+  const saveEdits = async (sendToKitchen: boolean): Promise<RestaurantOrder | null> => {
+    if (!selected || !hasItemChanges) return null;
     if (remainingCount === 0 && additions.length === 0) {
       toast.error('That would leave nothing on the order — cancel it instead');
-      return;
+      return null;
     }
     const id = selected.id;
     const wasPrinted = !!selected.billPrinted;
@@ -562,10 +578,10 @@ export function RestaurantCashierScreen() {
     let updated: RestaurantOrder | null = null;
     try {
       if (toAdd.length) {
-        updated = await restaurantApi.addItems(id, toAdd);
+        updated = await restaurantApi.addItems(id, toAdd, { sendToKitchen });
       }
       if (toRemove.length) {
-        updated = await restaurantApi.removeItems(id, toRemove);
+        updated = await restaurantApi.removeItems(id, toRemove, { sendToKitchen });
       }
       discardEdits();
       if (updated) setSelected(updated);
@@ -573,11 +589,7 @@ export function RestaurantCashierScreen() {
       // still reads as printed — but the paper no longer matches it.
       setBillStale(wasPrinted);
       refresh();
-      toast.success(
-        wasPrinted
-          ? 'Order updated — reprint the bill when you are ready'
-          : 'Order updated — print the bill when you are ready',
-      );
+      return updated;
     } catch (error: any) {
       if (updated) {
         // The additions landed; only the removals did not.
@@ -588,8 +600,39 @@ export function RestaurantCashierScreen() {
       } else {
         toast.error(error?.message ?? 'Failed to update the order');
       }
+      return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * The two ways out of an edit, and both print the bill straight after —
+   * the customer's copy is wrong until they do.
+   *
+   * "Send to kitchen & print bill" sends the change as a round (and a
+   * cancellation ticket for struck dishes still cooking), as a waiter's
+   * would. "Print bill & update" keeps it away from the kitchen altogether:
+   * the dishes are handed over from the counter, so no ticket prints.
+   */
+  const saveAndPrint = async (sendToKitchen: boolean) => {
+    setSendingToKitchen(sendToKitchen);
+    try {
+      const updated = await saveEdits(sendToKitchen);
+      if (!updated) return;
+      setPrinting(true);
+      try {
+        await printOrderBill(updated);
+        toast.success(sendToKitchen ? 'Sent to the kitchen — bill printed' : 'Order updated — bill printed');
+      } catch (error: any) {
+        toast.error(
+          `Order updated, but the bill did not print — press Reprint.${error?.message ? ` ${error.message}` : ''}`,
+        );
+      } finally {
+        setPrinting(false);
+      }
+    } finally {
+      setSendingToKitchen(null);
     }
   };
 
@@ -763,6 +806,8 @@ export function RestaurantCashierScreen() {
     <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh}>
       <View style={{ gap: theme.spacing.md }}>
         <ConnectionBanner connected={connected} />
+        {/* Only while it blocks the till: the open drawer itself lives on the My Shift tab. */}
+        {tillBlocked && !shiftQuery.isLoading ? <ShiftBar /> : null}
         <View style={styles.headerRow}>
           <Text variant="h2">Cashier · {orders.length} open</Text>
           <Button
@@ -777,7 +822,7 @@ export function RestaurantCashierScreen() {
           <EmptyState
             icon={<Receipt size={28} color={theme.colors.mutedForeground} />}
             title="No open orders"
-            description="Orders sent by waiters appear here. Bills printed at another till are not shown."
+            description="Orders sent by waiters, and every other open order in the restaurant, appear here."
           />
         ) : (
           orders.map((order) => (
@@ -839,22 +884,29 @@ export function RestaurantCashierScreen() {
           selected ? (
             editing ? (
               /*
-                Update, not print: the change goes to the kitchen now, and once
-                it has landed the print button stands in this exact spot for
-                the cashier's next tap.
+                The cashier chooses whether the change goes to the kitchen.
+                Either way the bill prints straight after the save.
               */
               <View style={{ flex: 1, gap: theme.spacing.sm }}>
                 <Button
-                  onPress={saveEdits}
-                  loading={saving}
-                  disabled={!hasItemChanges}
-                  icon={<Save size={16} color={theme.colors.primaryForeground} />}
-                  label="Update order"
+                  onPress={() => saveAndPrint(true)}
+                  loading={sendingToKitchen === true}
+                  disabled={!hasItemChanges || tillBlocked || saving || printing}
+                  icon={<ChefHat size={16} color={theme.colors.primaryForeground} />}
+                  label="Send to kitchen & print bill"
+                />
+                <Button
+                  variant="outline"
+                  onPress={() => saveAndPrint(false)}
+                  loading={sendingToKitchen === false}
+                  disabled={!hasItemChanges || tillBlocked || saving || printing}
+                  icon={<Printer size={16} color={theme.colors.foreground} />}
+                  label="Print bill & update"
                 />
                 <Button
                   variant="outline"
                   onPress={discardEdits}
-                  disabled={saving}
+                  disabled={saving || printing}
                   icon={<Undo2 size={16} color={theme.colors.foreground} />}
                   label="Discard changes"
                 />
@@ -871,7 +923,7 @@ export function RestaurantCashierScreen() {
                   variant={billPrinted && !billStale ? 'outline' : 'primary'}
                   onPress={printBill}
                   loading={printing}
-                  disabled={settling || selected.orderStatus === 'draft'}
+                  disabled={settling || selected.orderStatus === 'draft' || tillBlocked}
                   icon={
                     <Printer
                       size={16}
@@ -902,14 +954,14 @@ export function RestaurantCashierScreen() {
                   <Button
                     variant="outline"
                     onPress={() => setEditing(true)}
-                    disabled={!canEdit}
+                    disabled={!canEdit || tillBlocked}
                     icon={<Pencil size={16} color={theme.colors.foreground} />}
                     label="Edit items"
                   />
                   <Button
                     variant="outline"
                     onPress={cancel}
-                    disabled={printing || settling}
+                    disabled={printing || settling || tillBlocked}
                     icon={<Ban size={16} color={theme.colors.destructive} />}
                     label="Cancel order"
                   />
@@ -963,7 +1015,8 @@ export function RestaurantCashierScreen() {
                 <Pencil size={16} color={theme.colors.warning} />
                 <Text variant="caption" style={{ flex: 1 }}>
                   Editing. Use − to strike lines off and pick dishes below to add them. Nothing
-                  changes until you tap Update; the bill prints separately afterwards.
+                  changes until you save: send the change to the kitchen, or keep it at the
+                  counter with "Print bill & update". The bill prints straight after either.
                 </Text>
               </View>
             )}
@@ -1188,16 +1241,21 @@ export function RestaurantCashierScreen() {
             )}
             {!billPrinted && selected.orderStatus !== 'draft' && !editing && (
               <Text variant="caption" color="mutedForeground">
-                Print the bill first. Once it is printed, only this till can mark it paid.
+                Print the bill first, then mark it paid once the money is in.
                 {!hasPrinter ? ' No printer is paired, so the bill is recorded without paper.' : ''}
               </Text>
             )}
-            {shiftBlocked && billPrinted && (
+            {tillBlocked ? (
+              <Text variant="caption" style={{ color: theme.colors.warning }}>
+                Open your shift first — printing, editing, cancelling and taking payment are
+                all counted against your drawer.
+              </Text>
+            ) : shiftBlocked && billPrinted ? (
               <Text variant="caption" style={{ color: theme.colors.warning }}>
                 Open your shift on the My Shift tab first — payments have to be counted
                 against a drawer.
               </Text>
-            )}
+            ) : null}
             {selected.tableName && billPrinted && !editing ? (
               <Text variant="caption" color="mutedForeground">
                 Marking it paid frees {selected.tableName} for the next customer.
@@ -1217,16 +1275,21 @@ export function RestaurantCashierScreen() {
             <Button
               onPress={() => createOrder(false)}
               loading={creating}
-              disabled={!cart.length}
+              disabled={!cart.length || tillBlocked}
               icon={<Printer size={16} color={theme.colors.primaryForeground} />}
               label={cartNeedsKitchen ? 'Send to kitchen & print bill' : 'Place order & print bill'}
             />
             <Button
               variant="outline"
               onPress={() => createOrder(true)}
-              disabled={creating || !cart.length}
+              disabled={creating || !cart.length || tillBlocked}
               label="Save as draft"
             />
+            {tillBlocked && (
+              <Text variant="caption" style={{ color: theme.colors.warning }}>
+                Open your shift first — new orders are counted against your drawer.
+              </Text>
+            )}
             {cart.length > 0 && !cartNeedsKitchen && (
               <Text variant="caption" color="mutedForeground">
                 Drinks only — nothing goes to the kitchen.

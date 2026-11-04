@@ -87,7 +87,10 @@ export function MyOrdersScreen() {
     return theme.colors.success;
   };
 
-  /** Hands the order to the Tables tab, which opens the menu as a new round. */
+  /**
+   * Hands the order to the Tables tab, which opens the menu as a new round —
+   * and its review sheet is where lines can be struck off too.
+   */
   const addItems = (order: RestaurantOrder) =>
     navigation.navigate('Tables', { appendToOrderId: order.id });
 
@@ -99,7 +102,7 @@ export function MyOrdersScreen() {
         <Text variant="h2">My Orders</Text>
         <Text variant="caption" color="mutedForeground">
           {orders.length} open table{orders.length === 1 ? '' : 's'}. Tap one to see what has
-          been ordered, or add the next round.
+          been ordered, add the next round, or take a dish off.
         </Text>
 
         <FilterPillRow options={SCOPES} value={scope} onChange={setScope} scrollable={false} />

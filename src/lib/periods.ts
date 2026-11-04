@@ -46,3 +46,35 @@ export function periodStart(key: ProfitPeriodKey, now = new Date()): string | un
   };
   return starts[key]?.toISOString();
 }
+
+export type SalesRangeKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'lastMonth';
+
+/** The item sales list's windows, in the order the pills show them. */
+export const SALES_RANGES: { value: SalesRangeKey; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'thisWeek', label: 'This week' },
+  { value: 'thisMonth', label: 'This month' },
+  { value: 'lastMonth', label: 'Last month' },
+];
+
+/**
+ * `[from, to)` for a sales window, as ISO instants at the device's local
+ * midnights — the same convention as periodStart(). `to` is exclusive, so
+ * "today" is midnight to the next midnight. Weeks start on Monday.
+ */
+export function salesRangeBounds(key: SalesRangeKey, now = new Date()): { from: string; to: string } {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const day = now.getDate();
+  const sinceMonday = (now.getDay() + 6) % 7;
+  const bounds: Record<SalesRangeKey, [Date, Date]> = {
+    today: [new Date(year, month, day), new Date(year, month, day + 1)],
+    yesterday: [new Date(year, month, day - 1), new Date(year, month, day)],
+    thisWeek: [new Date(year, month, day - sinceMonday), new Date(year, month, day + 1)],
+    thisMonth: [new Date(year, month, 1), new Date(year, month, day + 1)],
+    lastMonth: [new Date(year, month - 1, 1), new Date(year, month, 1)],
+  };
+  const [from, to] = bounds[key];
+  return { from: from.toISOString(), to: to.toISOString() };
+}

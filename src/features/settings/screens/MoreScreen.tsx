@@ -2,6 +2,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   BarChart3,
+  ChartColumn,
   ChevronRight,
   FolderTree,
   HandCoins,
@@ -150,6 +151,16 @@ const MENU: Array<{ title: string; items: MenuEntry[] }> = [
         icon: BarChart3,
         tone: 'primary',
         accountType: 'general',
+      },
+      {
+        // The dashboard module: an owner always, a supervisor when granted.
+        route: 'ItemSales',
+        label: 'Item sales',
+        description: 'How many of each dish sold, per day or month',
+        icon: ChartColumn,
+        tone: 'primary',
+        permission: 'dashboard',
+        accountType: 'restaurant',
       },
     ],
   },

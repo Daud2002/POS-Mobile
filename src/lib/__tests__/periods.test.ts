@@ -1,4 +1,4 @@
-import { periodStart } from '../periods';
+import { periodStart, salesRangeBounds } from '../periods';
 
 // A fixed "now": 31 May 2024, mid-afternoon local time.
 const now = new Date(2024, 4, 31, 14, 30);
@@ -31,5 +31,42 @@ describe('periodStart', () => {
 
   it('has no lower bound for all time', () => {
     expect(periodStart('allTime', now)).toBeUndefined();
+  });
+});
+
+describe('salesRangeBounds', () => {
+  // Friday 31 May 2024, mid-afternoon local time (the `now` above).
+  it('covers today as [midnight, next midnight)', () => {
+    expect(salesRangeBounds('today', now)).toEqual({
+      from: localMidnight(2024, 5, 31),
+      to: localMidnight(2024, 6, 1),
+    });
+  });
+
+  it('covers yesterday up to, not including, today', () => {
+    expect(salesRangeBounds('yesterday', now)).toEqual({
+      from: localMidnight(2024, 5, 30),
+      to: localMidnight(2024, 5, 31),
+    });
+  });
+
+  it('starts the week on Monday', () => {
+    expect(salesRangeBounds('thisWeek', now).from).toBe(localMidnight(2024, 5, 27));
+    // A Sunday belongs to the week that began six days earlier.
+    expect(salesRangeBounds('thisWeek', new Date(2024, 5, 2, 9)).from).toBe(localMidnight(2024, 5, 27));
+  });
+
+  it('covers the whole of last month, across a year boundary', () => {
+    expect(salesRangeBounds('lastMonth', new Date(2024, 0, 10))).toEqual({
+      from: localMidnight(2023, 12, 1),
+      to: localMidnight(2024, 1, 1),
+    });
+  });
+
+  it('runs this month from the 1st through today', () => {
+    expect(salesRangeBounds('thisMonth', now)).toEqual({
+      from: localMidnight(2024, 5, 1),
+      to: localMidnight(2024, 6, 1),
+    });
   });
 });

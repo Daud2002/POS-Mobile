@@ -27,6 +27,7 @@ export const queryKeys = {
    * when an order settles.
    */
   profitReport: (tz: string) => ['reports', 'profit', tz] as const,
+  itemSales: (filter: string) => ['reports', 'item-sales', filter] as const,
 
   /**
    * Restaurant ingredient stock. Everything sits under 'inventory' so the
@@ -45,6 +46,7 @@ export const queryKeys = {
   expenses: (filter?: string) => ['expenses', filter ?? 'all'] as const,
   expenseCategories: () => ['expenses', 'categories'] as const,
   expenseSummary: (day: string) => ['expenses', 'summary', day] as const,
+  expenseBreakdown: (filter?: string) => ['expenses', 'breakdown', filter ?? 'all'] as const,
 
   store: (id: string) => ['store', id] as const,
 

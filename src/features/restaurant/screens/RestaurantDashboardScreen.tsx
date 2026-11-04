@@ -189,10 +189,10 @@ export function RestaurantDashboardScreen() {
             tone="warning"
             loading={reportQuery.isLoading}
           />
-          {/* Collected on delivery orders in this window; sits outside Revenue, which is what the food sold for. */}
+          {/* Collected on delivery orders in this window — already counted in Revenue, shown on its own for reference. */}
           <StatCard
             title="Delivery charges"
-            subtitle="not in revenue"
+            subtitle="included in revenue"
             value={format(report?.deliveryChargeTotal ?? 0)}
             icon={<Truck size={18} color={theme.colors.accent} />}
             tone="accent"

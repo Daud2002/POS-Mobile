@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Trash2, Wallet } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Pencil, Trash2, Wallet } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
-import { FlatList, RefreshControl, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
 import { queryKeys } from '@/api/queryKeys';
 import { expensesApi, shiftsApi } from '@/api/services';
 import { Expense, ExpensePayload } from '@/api/types';
+import type { ExpenseFilters } from '@/api/services/expenses.api';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { ShiftBar } from '@/features/shifts/components/ShiftBar';
 import { effectiveRoleOf } from '@/lib/roles';
@@ -28,6 +29,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { canManageExpenseCategories } from '@/lib/access';
 import { localDateKey } from '@/lib/date';
+import { expenseCategoryLabel } from '@/lib/expenses';
 import { toNumber } from '@/lib/format';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -51,6 +53,9 @@ function rangeBounds(key: string): { from?: string; to?: string } {
   }
   return {};
 }
+
+/** Filter pill values: 'all' (no filter), 'none' (the empty bucket), or an id. */
+const ALL = 'all';
 
 /**
  * The store's spend ledger — one shared book, not a per-user one.
@@ -92,17 +97,42 @@ export function ExpensesScreen() {
   };
 
   const [range, setRange] = useState('month');
+  const [categoryFilter, setCategoryFilter] = useState(ALL);
+  const [subcategoryFilter, setSubcategoryFilter] = useState(ALL);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [deleting, setDeleting] = useState<Expense | null>(null);
 
-  const bounds = useMemo(() => rangeBounds(range), [range]);
+  /**
+   * Range, category and subcategory together — "how much did I pay Ahmad for
+   * petrol this month" is Petrol › Ahmad with the month pill, and the "Shown"
+   * card is the answer.
+   */
+  const filters = useMemo<ExpenseFilters>(
+    () => ({
+      ...rangeBounds(range),
+      categoryId: categoryFilter === ALL ? undefined : categoryFilter,
+      subcategoryId:
+        categoryFilter === ALL || categoryFilter === 'none' || subcategoryFilter === ALL
+          ? undefined
+          : subcategoryFilter,
+    }),
+    [range, categoryFilter, subcategoryFilter],
+  );
+  const filterKey = `${range}|${filters.categoryId ?? ALL}|${filters.subcategoryId ?? ALL}`;
   const today = localDateKey(new Date());
 
   const expensesQuery = useQuery({
-    queryKey: queryKeys.expenses(range),
-    queryFn: () => expensesApi.list(bounds),
+    queryKey: queryKeys.expenses(filterKey),
+    queryFn: () => expensesApi.list(filters),
+  });
+
+  const breakdownQuery = useQuery({
+    queryKey: queryKeys.expenseBreakdown(filterKey),
+    queryFn: () => expensesApi.breakdown(filters),
+    enabled: breakdownOpen,
   });
 
   const summaryQuery = useQuery({
@@ -146,6 +176,26 @@ export function ExpensesScreen() {
 
   const expenses = expensesQuery.data ?? [];
   const summary = summaryQuery.data;
+  const categories = categoriesQuery.data ?? [];
+  const breakdown = breakdownQuery.data ?? [];
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: ALL, label: 'All categories' },
+      ...categories.map((c) => ({ value: c.id, label: c.name })),
+      { value: 'none', label: 'Uncategorized' },
+    ],
+    [categories],
+  );
+  const subcategoryOptions = useMemo(() => {
+    const subs = categories.find((c) => c.id === categoryFilter)?.subcategories ?? [];
+    if (!subs.length) return [];
+    return [
+      { value: ALL, label: 'All' },
+      ...subs.map((s) => ({ value: s.id, label: s.name })),
+      { value: 'none', label: 'No subcategory' },
+    ];
+  }, [categories, categoryFilter]);
 
   // Summed from the loaded rows, which is the whole range: the mobile list is
   // not paged, so this cannot disagree with what is on screen.
@@ -189,6 +239,7 @@ export function ExpensesScreen() {
               onRefresh={() => {
                 void expensesQuery.refetch();
                 void summaryQuery.refetch();
+                if (breakdownOpen) void breakdownQuery.refetch();
               }}
               tintColor={theme.colors.primary}
               colors={[theme.colors.primary]}
@@ -229,6 +280,84 @@ export function ExpensesScreen() {
               </StatRow>
 
               <FilterPillRow options={RANGES} value={range} onChange={setRange} />
+              <FilterPillRow
+                options={categoryOptions}
+                value={categoryFilter}
+                onChange={(next) => {
+                  setCategoryFilter(next);
+                  setSubcategoryFilter(ALL);
+                }}
+              />
+              {subcategoryOptions.length ? (
+                <FilterPillRow
+                  options={subcategoryOptions}
+                  value={subcategoryFilter}
+                  onChange={setSubcategoryFilter}
+                />
+              ) : null}
+
+              <Card padding="lg">
+                <Pressable
+                  onPress={() => setBreakdownOpen((open) => !open)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: breakdownOpen }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}
+                >
+                  {breakdownOpen ? (
+                    <ChevronDown size={16} color={theme.colors.mutedForeground} />
+                  ) : (
+                    <ChevronRight size={16} color={theme.colors.mutedForeground} />
+                  )}
+                  <Text variant="bodyMedium">By category</Text>
+                </Pressable>
+                {breakdownOpen ? (
+                  <View style={{ gap: theme.spacing.sm, marginTop: theme.spacing.md }}>
+                    {breakdownQuery.isLoading ? (
+                      <SkeletonList count={2} lines={1} />
+                    ) : breakdown.length === 0 ? (
+                      <Text variant="caption" color="mutedForeground">
+                        Nothing spent in this period.
+                      </Text>
+                    ) : (
+                      breakdown.map((category) => (
+                        <View key={category.categoryId ?? 'none'} style={{ gap: theme.spacing.xs }}>
+                          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+                            <Text variant="smallMedium" style={{ flex: 1 }} numberOfLines={1}>
+                              {category.name} · {category.count}
+                            </Text>
+                            <Text variant="smallMedium">{format(category.total)}</Text>
+                          </View>
+                          {/* A lone "no subcategory" bucket would only repeat the category line. */}
+                          {category.subcategories.some((s) => s.subcategoryId)
+                            ? category.subcategories.map((s) => (
+                                <View
+                                  key={s.subcategoryId ?? 'none'}
+                                  style={{
+                                    flexDirection: 'row',
+                                    gap: theme.spacing.md,
+                                    paddingLeft: theme.spacing.lg,
+                                  }}
+                                >
+                                  <Text
+                                    variant="caption"
+                                    color="mutedForeground"
+                                    style={{ flex: 1 }}
+                                    numberOfLines={1}
+                                  >
+                                    {s.name ?? 'No subcategory'} · {s.count}
+                                  </Text>
+                                  <Text variant="caption" color="mutedForeground">
+                                    {format(s.total)}
+                                  </Text>
+                                </View>
+                              ))
+                            : null}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ) : null}
+              </Card>
             </View>
           }
           ListEmptyComponent={
@@ -260,7 +389,7 @@ export function ExpensesScreen() {
                         `new Date()` would apply the device offset. */}
                     {[
                       item.expenseDate,
-                      item.category?.name ?? 'Uncategorized',
+                      expenseCategoryLabel(item),
                       item.paymentMethod,
                     ]
                       .filter(Boolean)
@@ -322,7 +451,7 @@ export function ExpensesScreen() {
           open={formOpen}
           onClose={() => setFormOpen(false)}
           expense={editing}
-          categories={categoriesQuery.data ?? []}
+          categories={categories}
           saving={save.isPending}
           onSubmit={save.mutateAsync}
         />

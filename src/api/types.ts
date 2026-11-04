@@ -264,7 +264,7 @@ export interface RestaurantSalesReport {
   cost: number;
   profit: number;
   discountTotal: number;
-  /** Collected on delivery orders in the window; sits outside `revenue`. */
+  /** Collected on delivery orders in the window; already included in `revenue`. */
   deliveryChargeTotal: number;
   averageOrderValue: number;
   /** Lines sold with no cost price recorded — profit is overstated by these. */
@@ -274,6 +274,28 @@ export interface RestaurantSalesReport {
   /** Who COLLECTED the money, as opposed to who took the order. */
   byCashier: { name: string; orders: number; revenue: number }[];
   byOrderType: { orderType: string; orders: number; revenue: number }[];
+}
+
+export type ItemSalesGrouping = 'none' | 'day' | 'month';
+
+/** One item's sales — per item over the window, or per item per day/month. */
+export interface ItemSalesRow {
+  /** 'YYYY-MM-DD' (day) or 'YYYY-MM' (month) in the requested zone; null when not grouped. */
+  period: string | null;
+  productId: string;
+  name: string;
+  category: string | null;
+  quantity: number;
+  /** Line totals, before any discount taken off the whole order. */
+  revenue: number;
+}
+
+/** Response of GET /reports/item-sales. */
+export interface ItemSalesReport {
+  tz: string;
+  groupBy: ItemSalesGrouping;
+  rows: ItemSalesRow[];
+  totals: { quantity: number; revenue: number };
 }
 
 /** The six windows GET /reports/profit reports on. */
@@ -700,6 +722,38 @@ export interface ExpenseCategory {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  /** A–Z; retired ones only when the list was asked for with includeInactive. */
+  subcategories?: ExpenseSubcategory[];
+}
+
+/**
+ * Who or what within a category ("Petrol" → "Ahmad"). Anyone booking an
+ * expense can add one by typing a new name; owners and supervisors tidy them.
+ */
+export interface ExpenseSubcategory {
+  id: string;
+  storeId: string;
+  categoryId: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One row of GET /expenses/breakdown: a category, split by subcategory. */
+export interface ExpenseBreakdownCategory {
+  /** Null for uncategorized spend. */
+  categoryId: string | null;
+  name: string;
+  total: number;
+  count: number;
+  subcategories: {
+    /** Null for spend in the category with no subcategory. */
+    subcategoryId: string | null;
+    name: string | null;
+    total: number;
+    count: number;
+  }[];
 }
 
 export type ExpensePaymentMethod = 'cash' | 'card' | 'bank' | 'other';
@@ -715,6 +769,7 @@ export interface Expense {
   id: string;
   storeId: string;
   categoryId?: string | null;
+  subcategoryId?: string | null;
   title: string;
   amount: Decimal;
   expenseDate: string;
@@ -724,6 +779,7 @@ export interface Expense {
   createdAt: string;
   updatedAt: string;
   category?: ExpenseCategory | null;
+  subcategory?: ExpenseSubcategory | null;
   createdBy?: { id: string; name: string } | null;
 }
 
@@ -731,6 +787,10 @@ export interface ExpensePayload {
   title: string;
   amount: number;
   categoryId?: string | null;
+  /** An existing subcategory of `categoryId`, or null to clear it. */
+  subcategoryId?: string | null;
+  /** A subcategory by name: found (any case) or created under `categoryId`. */
+  subcategoryName?: string;
   expenseDate?: string;
   paymentMethod?: ExpensePaymentMethod;
   notes?: string;
