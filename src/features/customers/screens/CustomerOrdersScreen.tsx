@@ -114,7 +114,9 @@ export function CustomerOrdersScreen({ route }: RootStackScreenProps<'CustomerOr
               }
               onReprint={reprint}
               reprinting={reprintingId === order.id}
-              onMarkPaid={setPayingOrder}
+              // A restaurant order is paid at the till or from Credit Sales —
+              // the server refuses it here (as the web page already hides it).
+              onMarkPaid={isRestaurant ? undefined : setPayingOrder}
               markingPaid={markPaid.isPending && payingOrder?.id === order.id}
             />
           ))}

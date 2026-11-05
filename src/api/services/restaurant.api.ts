@@ -8,6 +8,8 @@ import type {
   RestaurantOrderItemPayload,
   RemoveOrderItemPayload,
   OrderHistory,
+  CreditBook,
+  CreditCustomerChoice,
 } from '../types';
 
 /**
@@ -148,6 +150,41 @@ export const restaurantApi = {
 
   cancel(id: string) {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/cancel`, {});
+  },
+
+  /**
+   * The customer leaves without paying: the order is completed and its table
+   * freed, but no money is taken. The money boxes only count when the bill
+   * was not printed.
+   */
+  credit(
+    id: string,
+    body: CreditCustomerChoice & {
+      discountType?: 'amount' | 'percent' | null;
+      discountValue?: number | null;
+      deliveryCharge?: number | null;
+    },
+  ) {
+    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/credit`, body);
+  },
+
+  /** A credit customer pays; the money goes on the caller's open shift. */
+  settleCredit(
+    id: string,
+    body: { paymentMethod?: string; split?: { cash?: number; card?: number; online?: number } },
+  ) {
+    return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/credit/settle`, body);
+  },
+
+  creditCustomers(params: { search?: string; status?: 'owing' | 'all' } = {}) {
+    return apiClient.get<CreditBook>(
+      `/restaurant/credit/customers${query({ search: params.search?.trim() || undefined, status: params.status })}`,
+    );
+  },
+
+  /** One customer's credit orders: still owed first, then paid, each newest first. */
+  creditCustomerOrders(customerId: string) {
+    return apiClient.get<RestaurantOrder[]>(`/restaurant/credit/customers/${customerId}/orders`);
   },
 
   salesReport(from?: string, to?: string) {

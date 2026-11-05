@@ -20,6 +20,7 @@ import {
   orderDestination, orderDisplayStatus, orderLabel, orderStatusLabel,
 } from '@/lib/orderLabel';
 import { paymentSummary } from '@/lib/payment';
+import { countsAsRevenue, isCreditOwing, isCreditSale } from '@/lib/creditSales';
 import { tint, useTheme } from '@/theme';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 
@@ -217,11 +218,12 @@ export function RestaurantOrdersScreen() {
   // Searched by the API, so the screen shows exactly what came back.
   const visible = orders;
 
-  // Only settled orders represent money actually taken.
+  // Only settled orders represent money actually taken — a credit sale
+  // nobody has collected yet is completed but not money.
   const settledTotal = useMemo(
     () =>
       visible
-        .filter((o) => o.orderStatus === 'completed')
+        .filter(countsAsRevenue)
         .reduce((sum, o) => sum + toNumber(o.total), 0),
     [visible],
   );
@@ -307,6 +309,15 @@ export function RestaurantOrdersScreen() {
                           {'  '}parcel
                         </Text>
                       ) : null}
+                      {/* Served, but the customer took it on credit. */}
+                      {isCreditSale(order) ? (
+                        <Text
+                          variant="caption"
+                          style={{ color: isCreditOwing(order) ? theme.colors.warning : theme.colors.success }}
+                        >
+                          {'  '}credit{isCreditOwing(order) ? ' · unpaid' : ''}
+                        </Text>
+                      ) : null}
                     </Text>
                     <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                       {order.waiterName ?? '—'} · {new Date(order.createdAt).toLocaleString()}
@@ -390,6 +401,7 @@ export function RestaurantOrdersScreen() {
                     </View>
                     <Text variant="caption" color="mutedForeground">
                       Payment: {order.paymentStatus ?? order.status}
+                      {isCreditSale(order) ? ' (credit)' : ''}
                       {order.paymentStatus === 'paid' && paymentSummary(order, format)
                         ? ` · ${paymentSummary(order, format)}`
                         : ''}

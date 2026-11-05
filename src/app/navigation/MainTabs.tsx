@@ -1,6 +1,6 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
-  ChefHat, ClipboardList, LayoutGrid, Menu, Receipt, ShoppingCart, UtensilsCrossed, Wallet,
+  ChefHat, ClipboardList, LayoutGrid, Menu, NotebookPen, Receipt, ShoppingCart, UtensilsCrossed, Wallet,
 } from 'lucide-react-native';
 import type { ComponentType } from 'react';
 
@@ -14,6 +14,7 @@ import { WaiterScreen } from '@/features/restaurant/screens/WaiterScreen';
 import { MyOrdersScreen } from '@/features/restaurant/screens/MyOrdersScreen';
 import { KitchenScreen } from '@/features/restaurant/screens/KitchenScreen';
 import { RestaurantCashierScreen } from '@/features/restaurant/screens/RestaurantCashierScreen';
+import { CreditSalesScreen } from '@/features/restaurant/screens/CreditSalesScreen';
 import { RestaurantDashboardScreen } from '@/features/restaurant/screens/RestaurantDashboardScreen';
 import { RestaurantOrdersScreen } from '@/features/restaurant/screens/RestaurantOrdersScreen';
 import { CashierDashboardScreen } from '@/features/shifts/screens/CashierDashboardScreen';
@@ -58,6 +59,12 @@ const RESTAURANT_TABS: TabSpec[] = [
    */
   { name: 'MyOrders', title: 'My Orders', permission: 'tables', component: MyOrdersScreen, icon: ClipboardList, staffOnly: true },
   { name: 'Cashier', permission: 'cashier', component: RestaurantCashierScreen, icon: Receipt },
+  /**
+   * Credit Sales: who owes what, and where it is collected. Rides on the till's
+   * own `cashier` permission. The owner gets it too — to see the book; only
+   * staff collect from it.
+   */
+  { name: 'Credit', permission: 'cashier', component: CreditSalesScreen, icon: NotebookPen },
   { name: 'Kitchen', permission: 'kitchen', component: KitchenScreen, icon: ChefHat },
   { name: 'Orders', permission: 'orders', component: RestaurantOrdersScreen, icon: ClipboardList },
 ];
@@ -77,9 +84,10 @@ const GENERAL_TABS: TabSpec[] = [
  * that a cashier granted the dashboard now gets a Dashboard tab without a
  * further branch here.
  *
- * The set is naturally bounded — the widest is four tabs plus More — because
- * modules like expenses and the catalogue live under More rather than in the
- * tab bar.
+ * The set is naturally bounded — the owner's is the widest, five tabs plus
+ * More since Credit joined the till — because modules like expenses and the
+ * catalogue live under More rather than in the tab bar. Each tab takes an
+ * equal share of the width and its label is one line, so five still fit.
  */
 export function MainTabs() {
   const { user } = useAuth();

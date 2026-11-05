@@ -61,6 +61,7 @@ export type RestaurantTabParamList = {
   Tables: { appendToOrderId?: string } | undefined;
   MyOrders: undefined;
   Cashier: undefined;
+  Credit: undefined;
   Kitchen: undefined;
   Orders: undefined;
   More: undefined;

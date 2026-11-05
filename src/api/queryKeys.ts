@@ -56,6 +56,11 @@ export const queryKeys = {
   restaurantOrder: (id: string) => ['restaurant', 'order', id] as const,
   restaurantOrderHistory: (id: string) => ['restaurant', 'order', id, 'history'] as const,
   restaurantReport: (range: string) => ['restaurant', 'report', range] as const,
+  /** Credit Sales — under 'restaurant' so settling or crediting at the till refreshes it. */
+  creditCustomers: (search: string, status: string) =>
+    ['restaurant', 'credit', 'customers', status, search] as const,
+  creditCustomerOrders: (customerId: string) =>
+    ['restaurant', 'credit', 'orders', customerId] as const,
 
   /**
    * Cashier shifts. Deliberately under the 'restaurant' prefix so the existing

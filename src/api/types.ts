@@ -150,9 +150,20 @@ export interface RestaurantOrder {
   billPrintCount?: number;
   /** Prints after the first — what the owner's list flags. */
   reprintCount?: number;
+  /** The directory customer, when one is linked (deliveries, credit sales). */
+  customerId?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   deliveryAddress?: string | null;
+  /**
+   * CREDIT SALE: when the customer walked away owing. Set on credit orders
+   * only and never cleared — a collected one keeps it, with
+   * `paymentStatus: 'paid'` and the collector in `settledByName`.
+   */
+  creditedAt?: string | null;
+  creditedByName?: string | null;
+  /** On credit and not paid yet. */
+  creditOwing?: boolean;
   items: RestaurantOrderItem[];
   subtotal: Decimal;
   discount: Decimal;
@@ -924,3 +935,27 @@ export interface EmployeePayload {
   designation?: string;
   isActive?: boolean;
 }
+
+/** A row of GET /restaurant/credit/customers. */
+export interface CreditCustomer {
+  customerId: string;
+  name: string;
+  phone: string | null;
+  /** What they still owe, across every unpaid credit order. */
+  outstanding: number;
+  unpaidCount: number;
+  paidCount: number;
+  lastCreditedAt: string | null;
+  lastOwedAt: string | null;
+}
+
+export interface CreditBook {
+  customers: CreditCustomer[];
+  /** Store-wide, whatever the search box holds. */
+  totals: { outstanding: number; customersOwing: number; unpaidCount: number };
+}
+
+/** Who owes it, as POST /restaurant/orders/:id/credit takes it. */
+export type CreditCustomerChoice =
+  | { customerId: string }
+  | { customerName: string; customerPhone: string };

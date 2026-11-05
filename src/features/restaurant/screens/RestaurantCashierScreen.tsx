@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Pencil, ChefHat, Undo2,
+  Printer, Receipt, Ban, Plus, Minus, BadgeCheck, Pencil, ChefHat, Undo2, NotebookPen,
 } from 'lucide-react-native';
 
 import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from '@/api/services';
@@ -46,10 +46,11 @@ import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { ShiftBar } from '@/features/shifts/components/ShiftBar';
 import { receiptFromRestaurantOrder } from '@/features/printing/templates/receiptFromOrder';
 import { tint, useTheme } from '@/theme';
-import type { Decimal, RestaurantOrder, RestaurantOrderItem } from '@/api/types';
+import type { CreditCustomerChoice, Decimal, RestaurantOrder, RestaurantOrderItem } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { CustomerSuggestions } from '../components/CustomerSuggestions';
+import { CreditCustomerPicker } from '../components/CreditCustomerPicker';
 
 /** How the money can arrive. 'partial' opens the split editor. */
 const PAYMENT_METHODS = ['cash', 'card', 'online', 'partial'] as const;
@@ -143,6 +144,14 @@ export function RestaurantCashierScreen() {
   const [split, setSplit] = useState<SplitText>(EMPTY_SPLIT_TEXT);
   const [printing, setPrinting] = useState(false);
   const [settling, setSettling] = useState(false);
+  /**
+   * "Add to credit sales": the checkout sheet switches to a customer picker
+   * (a second sheet on top of this one would be a nested Modal, which iOS
+   * does not present reliably).
+   */
+  const [creditMode, setCreditMode] = useState(false);
+  const [creditChoice, setCreditChoice] = useState<CreditCustomerChoice | null>(null);
+  const [crediting, setCrediting] = useState(false);
 
   /**
    * Editing the lines of the selected order. Removals are staged per line
@@ -467,6 +476,8 @@ export function RestaurantCashierScreen() {
     setSplit(EMPTY_SPLIT_TEXT);
     discardEdits();
     setBillStale(false);
+    setCreditMode(false);
+    setCreditChoice(null);
   };
 
   const closeOrder = () => {
@@ -476,6 +487,8 @@ export function RestaurantCashierScreen() {
     setSplit(EMPTY_SPLIT_TEXT);
     discardEdits();
     setBillStale(false);
+    setCreditMode(false);
+    setCreditChoice(null);
   };
 
   const canEdit =
@@ -662,6 +675,36 @@ export function RestaurantCashierScreen() {
       toast.error(error?.message ?? 'Failed to mark the order paid');
     } finally {
       setSettling(false);
+    }
+  };
+
+  /**
+   * The customer leaves without paying: the order goes on their credit. It
+   * closes the order and frees the table like a payment would, but nothing is
+   * collected — the money is taken later, from the Credit tab, by whoever is
+   * on the till then. No printed bill is needed; when there is none, the
+   * boxes' discount and charge are what the customer owes.
+   */
+  const putOnCredit = async () => {
+    if (!selected || !creditChoice) return;
+    setCrediting(true);
+    try {
+      const updated = await restaurantApi.credit(selected.id, {
+        ...creditChoice,
+        ...(billPrinted ? {} : billFigures(selected.orderType)),
+      });
+      const who = updated?.customerName || 'the customer';
+      toast.success(
+        selected.tableName
+          ? `On ${who}'s credit — ${selected.tableName} is now free`
+          : `On ${who}'s credit`,
+      );
+      closeOrder();
+      refresh();
+    } catch (error: any) {
+      toast.error(error?.message ?? 'Failed to put the order on credit');
+    } finally {
+      setCrediting(false);
     }
   };
 
@@ -872,9 +915,11 @@ export function RestaurantCashierScreen() {
       <Sheet
         open={!!selected}
         onClose={closeOrder}
-        title={selected ? orderDestination(selected) : ''}
+        title={selected ? (creditMode ? 'Add to credit sales' : orderDestination(selected)) : ''}
         description={
-          selected
+          selected && creditMode
+            ? `${orderLabel(selected)} · ${format(billPrinted ? toNumber(selected.total) : billTotal)} goes on the customer's account. Nothing is collected now — mark it paid from the Credit tab when they pay.`
+            : selected
             ? `${orderLabel(selected)} · ${orderStatusLabel(orderDisplayStatus(selected))}${
                 toNumber(selected.reprintCount) > 0 ? ` · reprinted ×${toNumber(selected.reprintCount)}` : ''
               }`
@@ -882,7 +927,26 @@ export function RestaurantCashierScreen() {
         }
         footer={
           selected ? (
-            editing ? (
+            creditMode ? (
+              <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+                <Button
+                  variant="outline"
+                  label="Back"
+                  onPress={() => setCreditMode(false)}
+                  disabled={crediting}
+                  icon={<Undo2 size={16} color={theme.colors.foreground} />}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  label="Put on credit"
+                  onPress={putOnCredit}
+                  loading={crediting}
+                  disabled={!creditChoice || tillBlocked}
+                  icon={<NotebookPen size={16} color={theme.colors.primaryForeground} />}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            ) : editing ? (
               /*
                 The cashier chooses whether the change goes to the kitchen.
                 Either way the bill prints straight after the save.
@@ -950,6 +1014,22 @@ export function RestaurantCashierScreen() {
                   icon={<BadgeCheck size={16} color={theme.colors.primaryForeground} />}
                   label="Mark as paid"
                 />
+                {/*
+                  The customer will pay later. Unlike Mark as paid this needs
+                  no printed bill — an order can go on credit at any point
+                  before it is paid — but it still closes the order, so a
+                  cashier without a drawer cannot do it.
+                */}
+                <Button
+                  variant="outline"
+                  onPress={() => {
+                    setCreditChoice(null);
+                    setCreditMode(true);
+                  }}
+                  disabled={printing || settling || selected.orderStatus === 'draft' || tillBlocked}
+                  icon={<NotebookPen size={16} color={theme.colors.foreground} />}
+                  label="Add to credit sales"
+                />
                 <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
                   <Button
                     variant="outline"
@@ -971,7 +1051,10 @@ export function RestaurantCashierScreen() {
           ) : undefined
         }
       >
-        {selected && (
+        {selected && creditMode && (
+          <CreditCustomerPicker key={selected.id} order={selected} onChange={setCreditChoice} />
+        )}
+        {selected && !creditMode && (
           <>
             {/* The paper is out of date: this till changed the lines after
                 printing it. Reprint before the customer pays. */}
@@ -1259,6 +1342,11 @@ export function RestaurantCashierScreen() {
             {selected.tableName && billPrinted && !editing ? (
               <Text variant="caption" color="mutedForeground">
                 Marking it paid frees {selected.tableName} for the next customer.
+              </Text>
+            ) : null}
+            {selected.orderStatus !== 'draft' && !editing ? (
+              <Text variant="caption" color="mutedForeground">
+                Credit sales leave the till unpaid — collect them later from the Credit tab.
               </Text>
             ) : null}
           </>

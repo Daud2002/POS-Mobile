@@ -168,6 +168,13 @@ export function ShiftDetailScreen() {
                 <View style={{ flex: 1 }}>
                   <Text variant="body" numberOfLines={1}>
                     {orderLabel(order)} · {orderDestination(order)}
+                    {/* Served on an earlier day and taken on credit; the
+                        money came in during this shift. */}
+                    {order.creditedAt ? (
+                      <Text variant="caption" style={{ color: theme.colors.warning }}>
+                        {'  '}credit payment{order.customerName ? ` · ${order.customerName}` : ''}
+                      </Text>
+                    ) : null}
                   </Text>
                   <Text variant="caption" color="mutedForeground" numberOfLines={1}>
                     {order.settledAt
