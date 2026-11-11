@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgeCheck, ChevronDown, NotebookPen, Phone } from 'lucide-react-native';
@@ -17,6 +17,7 @@ import { displayDate, timeLabel } from '@/lib/date';
 import { toNumber } from '@/lib/format';
 import { orderDestination, orderLabel } from '@/lib/orderLabel';
 import { paymentSummary } from '@/lib/payment';
+import { tipWasDropped, type SettleBody } from '@/lib/tips';
 import { effectiveRoleOf } from '@/lib/roles';
 import { RealtimeEvents } from '@/lib/socket';
 import { ShiftBar } from '@/features/shifts/components/ShiftBar';
@@ -151,7 +152,13 @@ function CustomerOrders({
 export function CreditSalesScreen() {
   const theme = useTheme();
   const toast = useToast();
-  const { user } = useAuth();
+  const { user, refresh: refreshProfile } = useAuth();
+
+  // Which tips are recorded rides on the profile; re-read it on every visit
+  // so a switch the owner just flipped shows in the payment sheet.
+  useEffect(() => {
+    void refreshProfile();
+  }, [refreshProfile]);
   const { format } = useStoreCurrency();
   const queryClient = useQueryClient();
 
@@ -183,17 +190,29 @@ export function CreditSalesScreen() {
 
   const { connected } = useRealtime({ events: [RealtimeEvents.orderUpdated], onChange: refresh });
 
-  const collect = async (body: { paymentMethod: string; split?: { cash: number; card: number; online: number } }) => {
+  const collect = async (body: SettleBody) => {
     if (!paying) return;
     setSubmitting(true);
     try {
-      await restaurantApi.settleCredit(paying.order.id, body);
-      toast.success(`${orderLabel(paying.order)} paid by ${paying.customer.name}`);
+      const paid = await restaurantApi.settleCredit(paying.order.id, body);
+      // A store server older than this till drops the tip without a word. The
+      // order is paid either way; only claim the tip when it was really stored.
+      const dropped = tipWasDropped(body, paid);
+      if (dropped) {
+        toast.warning('Paid, but the tip was not recorded. This till’s server needs an update.');
+      }
+      toast.success(
+        `${orderLabel(paying.order)} paid by ${paying.customer.name}` +
+          (body.tipAmount && !dropped ? ` · tip ${format(body.tipAmount)} recorded` : ''),
+      );
       setPaying(null);
       // The credit book, and this cashier's shift takings, both moved.
       queryClient.invalidateQueries({ queryKey: ['restaurant'] });
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to mark the order paid');
+      // The owner may have just changed which tips are recorded: re-read the
+      // switches so the box matches what the server will accept.
+      if (body.tipAmount) void refreshProfile();
     } finally {
       setSubmitting(false);
     }

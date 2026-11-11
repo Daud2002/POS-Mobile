@@ -1,3 +1,5 @@
+import type { SettleBody } from '@/lib/tips';
+
 import { apiClient, query } from '../client';
 import type {
   Paged,
@@ -139,12 +141,10 @@ export const restaurantApi = {
   /**
    * Step two: the money. Charges exactly what was printed, so only how it was
    * paid is decided here. A 'partial' payment carries the per-method amounts,
-   * which must add up to the total.
+   * which must add up to the total. A tip rides beside the bill (`tipAmount`),
+   * never inside the split. The body is built by planSettlement() in lib/tips.
    */
-  settle(
-    id: string,
-    body: { paymentMethod?: string; split?: { cash?: number; card?: number; online?: number } },
-  ) {
+  settle(id: string, body: SettleBody) {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/settle`, body);
   },
 
@@ -168,11 +168,8 @@ export const restaurantApi = {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/credit`, body);
   },
 
-  /** A credit customer pays; the money goes on the caller's open shift. */
-  settleCredit(
-    id: string,
-    body: { paymentMethod?: string; split?: { cash?: number; card?: number; online?: number } },
-  ) {
+  /** A credit customer pays; the money — and any tip — goes on the caller's open shift. */
+  settleCredit(id: string, body: SettleBody) {
     return apiClient.post<RestaurantOrder>(`/restaurant/orders/${id}/credit/settle`, body);
   },
 

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Order, PaymentMethod } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterPillRow } from '@/components/ui/FilterPill';
@@ -50,6 +51,8 @@ export function OrdersScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
       <View
         style={{
           paddingHorizontal: theme.spacing.lg,
@@ -116,6 +119,7 @@ export function OrdersScreen() {
         onConfirm={handleConfirmPaid}
         loading={markingPaid}
       />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { BadgeCheck } from 'lucide-react-native';
 
+import { useAuth } from '@/app/providers/AuthProvider';
 import { Button, Input, Sheet, Text } from '@/components/ui';
 import { toNumber } from '@/lib/format';
 import { orderDestination, orderLabel } from '@/lib/orderLabel';
@@ -15,8 +16,16 @@ import {
   type SplitMethod,
   type SplitText,
 } from '@/lib/payment';
+import {
+  isTipMethod,
+  planSettlement,
+  tipPolicyOf,
+  type SettleBody,
+  type TipMethod,
+} from '@/lib/tips';
 import { tint, useTheme } from '@/theme';
 import type { RestaurantOrder } from '@/api/types';
+import { AmountReceived, SplitTipPicker } from './TipEntry';
 
 const METHODS = ['cash', 'card', 'online', 'partial'] as const;
 
@@ -27,13 +36,16 @@ interface CollectCreditSheetProps {
   money: (amount: number) => string;
   submitting: boolean;
   onClose: () => void;
-  onConfirm: (body: { paymentMethod: string; split?: { cash: number; card: number; online: number } }) => void;
+  onConfirm: (body: SettleBody) => void;
 }
 
 /**
  * Taking the money for a credit order: how it was paid, exactly as at the
  * till — one method, or a split that must add up to the total. Mirrors the
  * web's CollectCreditDialog.
+ *
+ * And, as at the till, where the owner records tips the cashier says what
+ * was received; anything above the amount due is a tip in THEIR shift.
  */
 export function CollectCreditSheet({
   order,
@@ -44,8 +56,11 @@ export function CollectCreditSheet({
   onConfirm,
 }: CollectCreditSheetProps) {
   const theme = useTheme();
+  const { user } = useAuth();
   const [method, setMethod] = useState<string>('cash');
   const [split, setSplit] = useState<SplitText>(EMPTY_SPLIT_TEXT);
+  const [receivedText, setReceivedText] = useState('');
+  const [tipMethod, setTipMethod] = useState<TipMethod | null>(null);
 
   // A fresh choice for every order opened.
   const orderId = order?.id;
@@ -53,6 +68,8 @@ export function CollectCreditSheet({
     if (orderId) {
       setMethod('cash');
       setSplit(EMPTY_SPLIT_TEXT);
+      setReceivedText('');
+      setTipMethod(null);
     }
   }, [orderId]);
 
@@ -61,6 +78,24 @@ export function CollectCreditSheet({
   const left = splitRemaining(total, parsed);
   const balanced = isSplitBalanced(total, parsed);
   const partial = method === 'partial';
+
+  const tipPolicy = useMemo(() => tipPolicyOf(user), [user]);
+  const takesTip = !partial && isTipMethod(method) && tipPolicy[method];
+  const plan = planSettlement({
+    total,
+    paymentMethod: method,
+    policy: tipPolicy,
+    receivedText,
+    split: parsed,
+    tipMethod,
+  });
+
+  /** A tip typed for one method must not ride along onto another. */
+  const chooseMethod = (next: string) => {
+    setMethod(next);
+    setReceivedText('');
+    setTipMethod(null);
+  };
 
   const fillRemaining = (m: SplitMethod) => {
     if (left <= 0) return;
@@ -75,12 +110,20 @@ export function CollectCreditSheet({
       description={order ? `${orderLabel(order)} · ${orderDestination(order)} · ${customerName}` : undefined}
       footer={
         <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
-          <Button variant="outline" label="Cancel" onPress={onClose} disabled={submitting} style={{ flex: 1 }} />
           <Button
-            label="Mark paid"
+            variant="outline"
+            label="Cancel"
+            onPress={onClose}
+            disabled={submitting}
+            // With a tip the other button has an amount to show, and needs the room.
+            style={plan.tip > 0 ? undefined : { flex: 1 }}
+          />
+          <Button
+            label={plan.tip > 0 ? `Mark paid · tip ${money(plan.tip)}` : 'Mark paid'}
             loading={submitting}
-            disabled={partial && !balanced}
-            onPress={() => onConfirm(partial ? { paymentMethod: method, split: parsed } : { paymentMethod: method })}
+            // A split that does not add up, or less received than is due.
+            disabled={!plan.body}
+            onPress={() => plan.body && onConfirm(plan.body)}
             icon={<BadgeCheck size={16} color={theme.colors.primaryForeground} />}
             style={{ flex: 1 }}
           />
@@ -110,7 +153,9 @@ export function CollectCreditSheet({
               return (
                 <Pressable
                   key={m}
-                  onPress={() => setMethod(m)}
+                  onPress={() => chooseMethod(m)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
                   style={[
                     styles.pill,
                     {
@@ -126,6 +171,16 @@ export function CollectCreditSheet({
             })}
           </View>
         </View>
+
+        {takesTip && (
+          <AmountReceived
+            total={total}
+            method={method as TipMethod}
+            value={receivedText}
+            onChange={setReceivedText}
+            money={money}
+          />
+        )}
 
         {partial && (
           <View
@@ -153,18 +208,22 @@ export function CollectCreditSheet({
                 </Pressable>
               </View>
             ))}
-            <View style={styles.splitRow}>
-              <Text
-                variant="caption"
-                style={{
-                  flex: 1,
-                  color: balanced ? theme.colors.success : left > 0 ? theme.colors.warning : theme.colors.destructive,
-                }}
-              >
-                {balanced ? 'Adds up to the bill' : left > 0 ? 'Still to allocate' : 'Over the bill by'}
-              </Text>
-              <Text variant="caption">{money(balanced ? total : Math.abs(left))}</Text>
-            </View>
+            {plan.tip > 0 ? (
+              <SplitTipPicker plan={plan} onPick={setTipMethod} money={money} />
+            ) : (
+              <View style={styles.splitRow}>
+                <Text
+                  variant="caption"
+                  style={{
+                    flex: 1,
+                    color: balanced ? theme.colors.success : left > 0 ? theme.colors.warning : theme.colors.destructive,
+                  }}
+                >
+                  {balanced ? 'Adds up to the bill' : left > 0 ? 'Still to allocate' : 'Over the bill by'}
+                </Text>
+                <Text variant="caption">{money(balanced ? total : Math.abs(left))}</Text>
+              </View>
+            )}
           </View>
         )}
 

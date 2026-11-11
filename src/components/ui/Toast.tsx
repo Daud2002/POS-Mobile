@@ -12,6 +12,7 @@ import { StyleSheet, View } from 'react-native';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useLayout } from '@/hooks/useLayout';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { Text } from './Text';
@@ -86,13 +87,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 function ToastViewport({ toasts }: { toasts: ToastItem[] }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { isTablet } = useLayout();
 
   if (toasts.length === 0) return null;
 
   return (
     <View
       pointerEvents="none"
-      style={[styles.viewport, { top: insets.top + theme.spacing.sm, gap: theme.spacing.sm }]}
+      style={[
+        styles.viewport,
+        { top: insets.top + theme.spacing.sm, gap: theme.spacing.sm },
+        // A message, not a banner: on a tablet it stays a readable width, centred.
+        isTablet ? styles.viewportTablet : null,
+      ]}
     >
       {toasts.map((toast) => {
         const color =
@@ -112,6 +119,7 @@ function ToastViewport({ toasts }: { toasts: ToastItem[] }) {
             exiting={FadeOutUp.duration(160)}
             style={[
               styles.toast,
+              isTablet ? styles.toastTablet : null,
               theme.shadows.lg,
               {
                 backgroundColor: theme.colors.card,
@@ -148,9 +156,11 @@ const styles = StyleSheet.create({
     right: 12,
     zIndex: 1000,
   },
+  viewportTablet: { alignItems: 'center' },
   toast: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
   },
+  toastTablet: { width: '100%', maxWidth: 460 },
 });

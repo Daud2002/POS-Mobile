@@ -18,6 +18,7 @@ import { CreditSalesScreen } from '@/features/restaurant/screens/CreditSalesScre
 import { RestaurantDashboardScreen } from '@/features/restaurant/screens/RestaurantDashboardScreen';
 import { RestaurantOrdersScreen } from '@/features/restaurant/screens/RestaurantOrdersScreen';
 import { CashierDashboardScreen } from '@/features/shifts/screens/CashierDashboardScreen';
+import { useLayout } from '@/hooks/useLayout';
 import { isOwner, permissionsOf } from '@/lib/access';
 
 import { TabBar } from './TabBar';
@@ -94,11 +95,15 @@ export function MainTabs() {
   const isRestaurant = user?.accountType === 'restaurant';
   const granted = permissionsOf(user);
   const owner = isOwner(user);
+  const { isTablet } = useLayout();
 
   const screenOptions = {
     headerShown: false,
     // Cross-fade + slight shift between tab scenes on every switch.
     animation: 'shift',
+    // A tablet gets a rail down the left edge (TabBar draws it); a phone keeps
+    // the bar under its thumbs.
+    tabBarPosition: isTablet ? 'left' : 'bottom',
   } as const;
 
   const tabs = (isRestaurant ? RESTAURANT_TABS : GENERAL_TABS).filter((tab) => {

@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { Edge, SafeAreaView } from 'react-native-safe-area-context';
 
+import { useLayout } from '@/hooks/useLayout';
+import { CONTENT_WIDTH, type ContentWidth } from '@/lib/responsive';
 import { Spacing } from '@/theme/layout';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -34,11 +36,22 @@ interface ScreenProps {
   footer?: ReactNode;
   /** Lets a screen scroll programmatically, e.g. to a section it just revealed. */
   scrollRef?: RefObject<ScrollView | null>;
+  /**
+   * How wide the content may grow on a TABLET before it stops and centres:
+   * 'form', 'list' (the default), 'page' for dashboards, or 'full' for work
+   * screens that use the whole window. A phone ignores it — its content is
+   * always the width of the screen.
+   */
+  width?: ContentWidth;
 }
 
 /**
  * Standard screen container: themed background, safe-area insets, and the
  * web app's page rhythm (`space-y-6` between sections, 16px page padding).
+ *
+ * On a tablet the content is held to a centred column (`width`) instead of
+ * stretching edge to edge; the background, the scroll area and the footer bar
+ * still span the window.
  */
 export function Screen({
   children,
@@ -50,11 +63,20 @@ export function Screen({
   contentStyle,
   footer,
   scrollRef,
+  width = 'list',
 }: ScreenProps) {
   const theme = useTheme();
+  const { isTablet } = useLayout();
+
+  /** The centred column of a tablet. Null on a phone, and for 'full' screens. */
+  const column: ViewStyle | null =
+    isTablet && width !== 'full'
+      ? { width: '100%', maxWidth: CONTENT_WIDTH[width], alignSelf: 'center' }
+      : null;
 
   const content: StyleProp<ViewStyle> = [
     { padding: theme.spacing[padding], gap: theme.spacing['2xl'] },
+    column,
     contentStyle,
   ];
 
@@ -97,7 +119,8 @@ export function Screen({
               backgroundColor: theme.colors.background,
             }}
           >
-            {footer}
+            {/* The bar spans the window; what is in it lines up with the column above. */}
+            {column ? <View style={column}>{footer}</View> : footer}
           </View>
         ) : null}
       </PageFade>

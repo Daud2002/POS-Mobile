@@ -79,15 +79,33 @@ export function paymentParts(order: {
 /**
  * How an order was paid, for a list row: "Cash", or for a split payment each
  * part with its amount — "Cash Rs1,000 · Card Rs650". Null when unpaid.
+ *
+ * A tip left with the payment is added on the end — "Card · Tip Rs150" — and
+ * names its method whenever that is not obvious from the payment: on a split,
+ * or a cash tip left with a card payment. The amounts before it are the bill;
+ * the tip is never part of them.
  */
 export function paymentSummary(
-  order: Parameters<typeof paymentParts>[0],
+  order: Parameters<typeof paymentParts>[0] & {
+    tipAmount?: unknown;
+    tipMethod?: string | null;
+  },
   money: (amount: number) => string,
 ): string | null {
   if (!order?.paymentMethod) return null;
-  if (order.paymentMethod !== 'partial') return paymentMethodLabel(order.paymentMethod);
+
+  const tip = toNumber(order.tipAmount as never);
+  const tipPart =
+    tip > 0
+      ? ` · Tip ${money(tip)}` +
+        (order.tipMethod && order.tipMethod !== order.paymentMethod
+          ? ` (${paymentMethodLabel(order.tipMethod)})`
+          : '')
+      : '';
+
+  if (order.paymentMethod !== 'partial') return paymentMethodLabel(order.paymentMethod) + tipPart;
   const parts = paymentParts(order).map((p) => `${p.label} ${money(p.amount)}`);
-  return parts.length ? parts.join(' · ') : 'Split';
+  return (parts.length ? parts.join(' · ') : 'Split') + tipPart;
 }
 
 /**

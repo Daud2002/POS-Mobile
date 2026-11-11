@@ -19,6 +19,12 @@ interface StatCardProps {
   valueTone?: 'positive' | 'negative' | 'neutral';
   trend?: { value: string; positive: boolean };
   loading?: boolean;
+  /**
+   * Rendered across the bottom of the card, under the figure — e.g. a
+   * breakdown that opens. Held back while `loading`, like the figure it
+   * belongs to.
+   */
+  footer?: ReactNode;
 }
 
 /**
@@ -35,6 +41,7 @@ export function StatCard({
   valueTone = 'neutral',
   trend,
   loading = false,
+  footer,
 }: StatCardProps) {
   const theme = useTheme();
   const toneColor = theme.colors[tone];
@@ -104,12 +111,28 @@ export function StatCard({
         {title}
         {subtitle ? ` · ${subtitle}` : ''}
       </Text>
+
+      {footer && !loading ? (
+        <View
+          style={[
+            styles.footer,
+            {
+              marginTop: theme.spacing.md,
+              paddingTop: theme.spacing.sm,
+              borderTopColor: theme.colors.border,
+            },
+          ]}
+        >
+          {footer}
+        </View>
+      ) : null}
     </Card>
   );
 }
 
 const styles = StyleSheet.create({
   card: { flex: 1, minWidth: 150 },
+  footer: { borderTopWidth: StyleSheet.hairlineWidth },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   iconChip: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
 });

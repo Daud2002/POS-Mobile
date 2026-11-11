@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -7,7 +7,8 @@ import {
 
 import { restaurantApi, storesApi, productsApi, categoriesApi, shiftsApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
-import { Screen } from '@/components/layout';
+import { Columns, Screen } from '@/components/layout';
+import { useGrid } from '@/hooks/useLayout';
 import { Button, EmptyState, Input, SearchInput, Sheet, Text, useToast } from '@/components/ui';
 import { iconFor } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
@@ -41,6 +42,13 @@ import {
   type SplitMethod,
   type SplitText,
 } from '@/lib/payment';
+import {
+  isTipMethod,
+  planSettlement,
+  tipPolicyOf,
+  tipWasDropped,
+  type TipMethod,
+} from '@/lib/tips';
 import { effectiveRoleOf } from '@/lib/roles';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
 import { ShiftBar } from '@/features/shifts/components/ShiftBar';
@@ -51,11 +59,15 @@ import { useAuth } from '@/app/providers/AuthProvider';
 import { ConnectionBanner } from '../components/ConnectionBanner';
 import { CustomerSuggestions } from '../components/CustomerSuggestions';
 import { CreditCustomerPicker } from '../components/CreditCustomerPicker';
+import { AmountReceived, SplitTipPicker } from '../components/TipEntry';
 
 /** How the money can arrive. 'partial' opens the split editor. */
 const PAYMENT_METHODS = ['cash', 'card', 'online', 'partial'] as const;
 
 type NewOrderType = 'takeaway' | 'delivery';
+
+/** How old the profile may be before the till re-reads it on opening a bill. */
+const PROFILE_MAX_AGE_MS = 3 * 60_000;
 
 interface CartLine {
   productId: string;
@@ -129,9 +141,11 @@ function bumpLine(prev: CartLine[], productId: string, delta: number): CartLine[
  */
 export function RestaurantCashierScreen() {
   const theme = useTheme();
+  // The dish tiles: two across on a phone, as many as fit in a tablet's dialog.
+  const menuGrid = useGrid({ minItemWidth: 150, gap: 8, compactItemWidth: '48%' });
   const toast = useToast();
   const storeId = useStoreId();
-  const { user } = useAuth();
+  const { user, refresh: refreshProfile } = useAuth();
   const { format, currency } = useStoreCurrency();
   const queryClient = useQueryClient();
   const { printReceipt, hasPrinter } = usePrinter();
@@ -142,6 +156,30 @@ export function RestaurantCashierScreen() {
   const [paymentMethod, setPaymentMethod] = useState<string>('cash');
   /** The three boxes of a split payment, as typed. */
   const [split, setSplit] = useState<SplitText>(EMPTY_SPLIT_TEXT);
+  /**
+   * Tips, on stores that record them. "Amount received" for a single-method
+   * payment (blank = exactly the bill), and which part of a split the tip
+   * came by once its boxes add up to more than the bill.
+   */
+  const [receivedText, setReceivedText] = useState('');
+  const [tipMethod, setTipMethod] = useState<TipMethod | null>(null);
+
+  /**
+   * The owner's switches (shifts, which tips to record) ride on the profile,
+   * and this app can stay open for days. Re-read it when the till opens and
+   * whenever a bill is opened for payment — at most once every few minutes —
+   * so a switch the owner flips mid-shift reaches a running phone without a
+   * restart. A failed read keeps the profile it has.
+   */
+  const profileReadAt = useRef(0);
+  const refreshProfileIfStale = useCallback(() => {
+    if (Date.now() - profileReadAt.current < PROFILE_MAX_AGE_MS) return;
+    profileReadAt.current = Date.now();
+    void refreshProfile();
+  }, [refreshProfile]);
+  useEffect(() => {
+    refreshProfileIfStale();
+  }, [refreshProfileIfStale]);
   const [printing, setPrinting] = useState(false);
   const [settling, setSettling] = useState(false);
   /**
@@ -446,9 +484,38 @@ export function RestaurantCashierScreen() {
    * cashier stands as they type.
    */
   const parsedSplit = useMemo(() => parseSplit(split), [split]);
-  const splitLeft = splitRemaining(billTotal, parsedSplit);
-  const splitBalanced = isSplitBalanced(billTotal, parsedSplit);
+
+  /**
+   * What the money is taken against: the PRINTED bill, which is the figure
+   * the server charges — not the live preview of the boxes above. A tip is
+   * "received minus the bill", so measuring it against a preview would turn a
+   * discount typed after printing into a tip nobody left.
+   */
+  const payable = billPrinted ? toNumber(selected?.total) : billTotal;
+  const splitLeft = splitRemaining(payable, parsedSplit);
+  const splitBalanced = isSplitBalanced(payable, parsedSplit);
   const isPartial = paymentMethod === 'partial';
+
+  /** Which payment methods the owner records tips for; all off on most stores. */
+  const tipPolicy = useMemo(() => tipPolicyOf(user), [user]);
+  const takesTip = !isPartial && isTipMethod(paymentMethod) && tipPolicy[paymentMethod];
+
+  /** The request as it stands, or the reason it cannot be sent yet. */
+  const plan = planSettlement({
+    total: payable,
+    paymentMethod,
+    policy: tipPolicy,
+    receivedText,
+    split: parsedSplit,
+    tipMethod,
+  });
+
+  /** A tip typed for one method must not ride along onto another. */
+  const choosePaymentMethod = (method: string) => {
+    setPaymentMethod(method);
+    setReceivedText('');
+    setTipMethod(null);
+  };
 
   /** Drops whatever is still unallocated into one box. */
   const fillRemaining = (method: SplitMethod) => {
@@ -466,6 +533,8 @@ export function RestaurantCashierScreen() {
   };
 
   const openOrder = (order: RestaurantOrder) => {
+    // About to take money: make sure the owner's switches are current.
+    refreshProfileIfStale();
     setSelected(order);
     // The boxes show what the order already carries, printed or not.
     setDiscountText(discountTextOf(order));
@@ -474,6 +543,8 @@ export function RestaurantCashierScreen() {
     );
     setPaymentMethod('cash');
     setSplit(EMPTY_SPLIT_TEXT);
+    setReceivedText('');
+    setTipMethod(null);
     discardEdits();
     setBillStale(false);
     setCreditMode(false);
@@ -485,6 +556,8 @@ export function RestaurantCashierScreen() {
     setDiscountText('');
     setDeliveryChargeText('');
     setSplit(EMPTY_SPLIT_TEXT);
+    setReceivedText('');
+    setTipMethod(null);
     discardEdits();
     setBillStale(false);
     setCreditMode(false);
@@ -658,21 +731,30 @@ export function RestaurantCashierScreen() {
    */
   const markPaid = async () => {
     if (!selected) return;
-    if (isPartial && !splitBalanced) {
-      toast.error('The split has to add up to the bill before it can be taken');
+    if (!plan.body) {
+      toast.error(plan.problem || 'This payment cannot be taken as entered');
       return;
     }
     setSettling(true);
     try {
-      await restaurantApi.settle(
-        selected.id,
-        isPartial ? { paymentMethod, split: parsedSplit } : { paymentMethod },
+      const paid = await restaurantApi.settle(selected.id, plan.body);
+      // A store server older than this till drops the tip without a word. The
+      // bill is paid either way; only claim the tip when it was really stored.
+      const dropped = tipWasDropped(plan.body, paid);
+      if (dropped) {
+        toast.warning('Paid, but the tip was not recorded. This till’s server needs an update.');
+      }
+      const done = selected.tableName ? `Paid — ${selected.tableName} is now free` : 'Paid';
+      toast.success(
+        plan.tip > 0 && !dropped ? `${done} · tip ${format(plan.tip)} recorded` : done,
       );
-      toast.success(selected.tableName ? `Paid — ${selected.tableName} is now free` : 'Paid');
       closeOrder();
       refresh();
     } catch (error: any) {
       toast.error(error?.message ?? 'Failed to mark the order paid');
+      // The owner may have just changed which tips are recorded: re-read the
+      // switches so the box matches what the server will accept.
+      if (plan.tip > 0) void refreshProfile();
     } finally {
       setSettling(false);
     }
@@ -784,7 +866,7 @@ export function RestaurantCashierScreen() {
         ))}
       </ScrollView>
 
-      <View style={styles.productGrid}>
+      <View style={styles.productGrid} onLayout={menuGrid.onLayout}>
         {filteredProducts.length === 0 && (
           <Text variant="caption" color="mutedForeground">No dishes in this category.</Text>
         )}
@@ -794,6 +876,7 @@ export function RestaurantCashierScreen() {
             onPress={() => onPick(product as MenuProduct)}
             style={[
               styles.productCard,
+              { width: menuGrid.itemWidth },
               {
                 borderColor: theme.colors.border,
                 borderRadius: theme.radius.md,
@@ -846,7 +929,8 @@ export function RestaurantCashierScreen() {
     ));
 
   return (
-    <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh}>
+    // The whole window on a tablet, so the open orders sit side by side.
+    <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh} width="full">
       <View style={{ gap: theme.spacing.md }}>
         <ConnectionBanner connected={connected} />
         {/* Only while it blocks the till: the open drawer itself lives on the My Shift tab. */}
@@ -868,7 +952,9 @@ export function RestaurantCashierScreen() {
             description="Orders sent by waiters, and every other open order in the restaurant, appear here."
           />
         ) : (
-          orders.map((order) => (
+          // One order under another on a phone; in columns on a tablet.
+          <Columns minItemWidth={340} gap={theme.spacing.md}>
+          {orders.map((order) => (
             <Pressable
               key={order.id}
               onPress={() => openOrder(order)}
@@ -907,7 +993,8 @@ export function RestaurantCashierScreen() {
               </View>
               <Text variant="bodySemibold">{format(toNumber(order.total))}</Text>
             </Pressable>
-          ))
+          ))}
+          </Columns>
         )}
       </View>
 
@@ -1006,13 +1093,14 @@ export function RestaurantCashierScreen() {
                   disabled={
                     printing ||
                     !billPrinted ||
-                    (isPartial && !splitBalanced) ||
+                    // A split that does not add up, or less received than the bill.
+                    !plan.body ||
                     // The server rejects this too; disabling here is only so the
                     // cashier is told why before they try.
                     shiftBlocked
                   }
                   icon={<BadgeCheck size={16} color={theme.colors.primaryForeground} />}
-                  label="Mark as paid"
+                  label={plan.tip > 0 ? `Mark as paid · tip ${format(plan.tip)}` : 'Mark as paid'}
                 />
                 {/*
                   The customer will pay later. Unlike Mark as paid this needs
@@ -1231,7 +1319,9 @@ export function RestaurantCashierScreen() {
                   {PAYMENT_METHODS.map((method) => (
                     <Pressable
                       key={method}
-                      onPress={() => setPaymentMethod(method)}
+                      onPress={() => choosePaymentMethod(method)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: paymentMethod === method }}
                       style={pill(paymentMethod === method)}
                     >
                       <Text variant="caption">{paymentMethodLabel(method)}</Text>
@@ -1240,11 +1330,27 @@ export function RestaurantCashierScreen() {
                 </View>
 
                 {/*
+                  The owner records tips for this method: ask what was
+                  received. Blank means exactly the bill.
+                */}
+                {takesTip && (
+                  <AmountReceived
+                    total={payable}
+                    method={paymentMethod as TipMethod}
+                    value={receivedText}
+                    onChange={setReceivedText}
+                    money={format}
+                  />
+                )}
+
+                {/*
                   A customer paying part by card and the rest in cash: the
                   cashier types each part, and the bill is only taken once the
                   parts add up. "Rest" drops whatever is left into that box,
                   which is how most splits end — one exact figure on the card,
-                  the remainder in notes.
+                  the remainder in notes. Where tips are recorded the boxes
+                  may add up to MORE than the bill: the extra is the tip, and
+                  the cashier says how it came.
                 */}
                 {isPartial && (
                   <View
@@ -1277,41 +1383,45 @@ export function RestaurantCashierScreen() {
                         </Pressable>
                       </View>
                     ))}
-                    <View
-                      style={[
-                        styles.itemRow,
-                        { borderTopWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, paddingTop: theme.spacing.sm },
-                      ]}
-                    >
-                      <Text
-                        variant="caption"
-                        style={{
-                          color: splitBalanced
-                            ? theme.colors.success
-                            : splitLeft > 0
-                              ? theme.colors.warning
-                              : theme.colors.destructive,
-                        }}
+                    {plan.tip > 0 ? (
+                      <SplitTipPicker plan={plan} onPick={setTipMethod} money={format} />
+                    ) : (
+                      <View
+                        style={[
+                          styles.itemRow,
+                          { borderTopWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border, paddingTop: theme.spacing.sm },
+                        ]}
                       >
-                        {splitBalanced
-                          ? 'Adds up to the bill'
-                          : splitLeft > 0
-                            ? 'Still to allocate'
-                            : 'Over the bill by'}
-                      </Text>
-                      <Text
-                        variant="caption"
-                        style={{
-                          color: splitBalanced
-                            ? theme.colors.success
+                        <Text
+                          variant="caption"
+                          style={{
+                            color: splitBalanced
+                              ? theme.colors.success
+                              : splitLeft > 0
+                                ? theme.colors.warning
+                                : theme.colors.destructive,
+                          }}
+                        >
+                          {splitBalanced
+                            ? 'Adds up to the bill'
                             : splitLeft > 0
-                              ? theme.colors.warning
-                              : theme.colors.destructive,
-                        }}
-                      >
-                        {splitBalanced ? format(billTotal) : format(Math.abs(splitLeft))}
-                      </Text>
-                    </View>
+                              ? 'Still to allocate'
+                              : 'Over the bill by'}
+                        </Text>
+                        <Text
+                          variant="caption"
+                          style={{
+                            color: splitBalanced
+                              ? theme.colors.success
+                              : splitLeft > 0
+                                ? theme.colors.warning
+                                : theme.colors.destructive,
+                          }}
+                        >
+                          {splitBalanced ? format(payable) : format(Math.abs(splitLeft))}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
@@ -1357,6 +1467,8 @@ export function RestaurantCashierScreen() {
       <Sheet
         open={composerOpen}
         onClose={() => setComposerOpen(false)}
+        // A menu to pick from: the wide dialog on a tablet, for more dishes per row.
+        size="lg"
         title={`New ${orderType} order`}
         footer={
           <View style={{ flex: 1, gap: theme.spacing.sm }}>

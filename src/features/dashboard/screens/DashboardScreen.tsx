@@ -53,6 +53,8 @@ export function DashboardScreen() {
   return (
     <Screen
       scrollable
+      // The wider 'page' column on a tablet: figures and charts side by side.
+      width="page"
       edges={['top', 'bottom']}
       onRefresh={data.refetch}
       refreshing={data.refetching}

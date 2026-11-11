@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { InventoryItem } from '@/api/types';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import {
   Badge,
@@ -86,6 +87,8 @@ export function RestaurantInventoryScreen() {
   return (
     <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
         <View
           style={{
             paddingHorizontal: theme.spacing.lg,
@@ -287,6 +290,7 @@ export function RestaurantInventoryScreen() {
           }}
           onDecline={() => setDeleting(null)}
         />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

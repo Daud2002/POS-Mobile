@@ -13,6 +13,7 @@ import { Customer, CustomerPayload } from '@/api/types';
 import { RootStackParamList } from '@/app/navigation/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -106,6 +107,8 @@ export function CustomersScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
       <View
         style={{
           paddingHorizontal: theme.spacing.lg,
@@ -265,6 +268,7 @@ export function CustomersScreen() {
         }}
         onDecline={() => setDeleting(null)}
       />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

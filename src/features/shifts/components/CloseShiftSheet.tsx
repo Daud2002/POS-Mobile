@@ -3,13 +3,14 @@ import { View, StyleSheet } from 'react-native';
 
 import { shiftsApi } from '@/api/services';
 import { Button, Input, Sheet, Text, useToast } from '@/components/ui';
-import { KeyValueRow } from '@/components/data';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { useStoreCurrency } from '@/hooks/useStoreCurrency';
 import { toNumber } from '@/lib/format';
+import { hasTips, shiftFigures, tipsOutOfDrawer } from '@/lib/shiftMaths';
 import { usePrinter } from '@/features/printing/hooks/usePrinter';
-import { useTheme } from '@/theme';
+import { tint, useTheme } from '@/theme';
 import type { CashierShift } from '@/api/types';
+import { ShiftDrawer, ShiftTakings } from './ShiftMoney';
 
 /**
  * Counting the drawer and handing over.
@@ -17,6 +18,11 @@ import type { CashierShift } from '@/api/types';
  * Card and online takings are shown but excluded from the reconciliation: that
  * money never passed through the till, and mixing it in is exactly how a
  * cashier appears to be short by the day's card sales.
+ *
+ * TIPS come out before the count. Cash tips are in the drawer but are not the
+ * owner's, and where the store pays card/online tips from cash those leave it
+ * too — so what the cashier counts, and hands over, is what is left. The
+ * figures are the server's; lib/shiftMaths only lays them out.
  */
 export function CloseShiftSheet({
   open,
@@ -39,8 +45,10 @@ export function CloseShiftSheet({
   const [notes, setNotes] = useState('');
   const [closing, setClosing] = useState(false);
 
-  const totals = shift.totals;
-  const expected = toNumber(totals?.expectedCash);
+  const figures = shiftFigures(shift);
+  const expected = figures.expectedCash;
+  const tipped = hasTips(figures);
+  const tipsOut = tipsOutOfDrawer(figures);
 
   // Blank means "not counted yet", which is different from counting zero.
   const counted = countedText.trim() === '' ? null : toNumber(countedText);
@@ -69,15 +77,8 @@ export function CloseShiftSheet({
           cashierName: closed.cashierName ?? user?.name,
           openedAt: closed.openedAt,
           closedAt: closed.closedAt,
-          openingFloat: toNumber(closed.openingFloat),
-          cashSales: toNumber(closed.totals?.cashSales),
-          cardSales: toNumber(closed.totals?.cardSales),
-          onlineSales: toNumber(closed.totals?.onlineSales),
-          otherSales: toNumber(closed.totals?.otherSales),
-          totalSales: toNumber(closed.totals?.totalSales),
-          orderCount: closed.totals?.orderCount ?? 0,
-          cashPaidOut: toNumber(closed.totals?.cashPaidOut),
-          expectedCash: toNumber(closed.totals?.expectedCash),
+          // Sales, tips and the drawer arithmetic, exactly as stored.
+          ...shiftFigures(closed),
           countedCash: closed.countedCash ?? null,
           difference: closed.difference ?? null,
           notes: closed.closingNotes ?? null,
@@ -109,7 +110,11 @@ export function CloseShiftSheet({
       open={open}
       onClose={onClose}
       title="Close your shift"
-      description="Count the cash in your drawer. Card and online payments are listed for your records but are not handed over."
+      description={
+        tipped
+          ? 'Take the tips out of your drawer, then count what is left and enter it. Card and online payments are listed for your records but are not handed over.'
+          : 'Count the cash in your drawer. Card and online payments are listed for your records but are not handed over.'
+      }
       footer={
         <Button
           label={closing ? 'Closing…' : 'Close & print'}
@@ -121,21 +126,28 @@ export function CloseShiftSheet({
     >
       <View style={{ gap: 14 }}>
         <View style={[styles.block, { borderColor: theme.colors.border }]}>
-          <KeyValueRow label="Cash sales" value={format(toNumber(totals?.cashSales))} />
-          <KeyValueRow label="Card" value={format(toNumber(totals?.cardSales))} />
-          <KeyValueRow label="Online" value={format(toNumber(totals?.onlineSales))} />
-          <KeyValueRow label="Total takings" value={format(toNumber(totals?.totalSales))} />
+          <ShiftTakings figures={figures} money={format} />
         </View>
 
         <View style={[styles.block, { borderColor: theme.colors.border }]}>
-          <KeyValueRow label="Opening float" value={format(toNumber(shift.openingFloat))} />
-          <KeyValueRow label="+ Cash sales" value={format(toNumber(totals?.cashSales))} />
-          <KeyValueRow label="− Cash paid out" value={format(toNumber(totals?.cashPaidOut))} />
-          <KeyValueRow label="Should be in drawer" value={format(expected)} />
+          <ShiftDrawer figures={figures} money={format} />
         </View>
 
+        {tipsOut > 0 && (
+          <View style={[styles.note, { backgroundColor: tint(theme.colors.warning, 0.12) }]}>
+            <Text variant="caption">
+              Take{' '}
+              <Text variant="caption" style={{ fontFamily: theme.fontFamily.bodyBold }}>
+                {format(tipsOut)}
+              </Text>{' '}
+              of tips out of the drawer before you count. They are for the staff and are not
+              handed over.
+            </Text>
+          </View>
+        )}
+
         <Input
-          label="Cash you counted"
+          label={tipped ? 'Cash you counted, tips taken out' : 'Cash you counted'}
           keyboardType="decimal-pad"
           value={countedText}
           onChangeText={setCountedText}
@@ -169,6 +181,7 @@ export function CloseShiftSheet({
 
 const styles = StyleSheet.create({
   block: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 2 },
+  note: { borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
   diff: {
     flexDirection: 'row',
     justifyContent: 'space-between',

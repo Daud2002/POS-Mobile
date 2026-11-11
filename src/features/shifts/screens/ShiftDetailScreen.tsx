@@ -15,7 +15,9 @@ import { canSeeShifts } from '@/lib/access';
 import { orderDestination, orderLabel } from '@/lib/orderLabel';
 import { paymentSummary } from '@/lib/payment';
 import { toNumber } from '@/lib/format';
+import { hasTips, shiftFigures } from '@/lib/shiftMaths';
 import { useTheme } from '@/theme';
+import { ShiftDrawer, ShiftTakings } from '../components/ShiftMoney';
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
@@ -51,6 +53,9 @@ export function ShiftDetailScreen() {
 
   const shift = shiftQuery.data;
   const totals = shift?.totals;
+  const figures = shiftFigures(shift);
+  /** Tips change both cards: takings gain a tips column, the drawer shows them leaving. */
+  const tipped = hasTips(figures);
 
   const collect = async () => {
     setBusy(true);
@@ -113,19 +118,32 @@ export function ShiftDetailScreen() {
         </View>
 
         <SectionCard title="Takings">
-          <KeyValueRow label="Cash" value={format(toNumber(totals?.cashSales))} />
-          <KeyValueRow label="Card" value={format(toNumber(totals?.cardSales))} />
-          <KeyValueRow label="Online" value={format(toNumber(totals?.onlineSales))} />
-          <KeyValueRow label="Total" value={format(toNumber(totals?.totalSales))} emphasis />
+          {tipped ? (
+            <ShiftTakings figures={figures} money={format} />
+          ) : (
+            <>
+              <KeyValueRow label="Cash" value={format(toNumber(totals?.cashSales))} />
+              <KeyValueRow label="Card" value={format(toNumber(totals?.cardSales))} />
+              <KeyValueRow label="Online" value={format(toNumber(totals?.onlineSales))} />
+              <KeyValueRow label="Total" value={format(toNumber(totals?.totalSales))} emphasis />
+            </>
+          )}
           <KeyValueRow label="Orders" value={String(totals?.orderCount ?? 0)} />
         </SectionCard>
 
         {/* Only cash touches the drawer, which is why the reconciliation is
             separated from the takings above. */}
         <SectionCard title="Cash drawer">
-          <KeyValueRow label="Opening float" value={format(toNumber(shift.openingFloat))} />
-          <KeyValueRow label="Paid out" value={format(toNumber(totals?.cashPaidOut))} />
-          <KeyValueRow label="Expected" value={format(toNumber(totals?.expectedCash))} emphasis />
+          {tipped ? (
+            // Float, cash received, paid out, tips out — down to the cash to hand over.
+            <ShiftDrawer figures={figures} money={format} />
+          ) : (
+            <>
+              <KeyValueRow label="Opening float" value={format(toNumber(shift.openingFloat))} />
+              <KeyValueRow label="Paid out" value={format(toNumber(totals?.cashPaidOut))} />
+              <KeyValueRow label="Expected" value={format(toNumber(totals?.expectedCash))} emphasis />
+            </>
+          )}
           <KeyValueRow
             label="Counted"
             value={

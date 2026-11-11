@@ -19,7 +19,8 @@ import {
 import { restaurantApi, productsApi, categoriesApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
 import type { RestaurantTabParamList } from '@/app/navigation/types';
-import { Screen } from '@/components/layout';
+import { Columns, Screen } from '@/components/layout';
+import { useGrid } from '@/hooks/useLayout';
 import { Button, ConfirmDialog, EmptyState, Input, Sheet, Text, useToast } from '@/components/ui';
 import { categoryIcon, iconFor } from '@/constants/emojis';
 import { useStoreId } from '@/hooks/useStoreId';
@@ -72,6 +73,8 @@ interface CartLine {
  */
 export function WaiterScreen() {
   const theme = useTheme();
+  // Table tiles: three across on a phone, as many as fit on a tablet.
+  const tableGrid = useGrid({ minItemWidth: 128, gap: 8, compactItemWidth: '31%' });
   const toast = useToast();
   const storeId = useStoreId();
   const { format } = useStoreCurrency();
@@ -438,6 +441,8 @@ export function WaiterScreen() {
   return (
     <Screen
       scrollable
+      // The floor plan and the menu use the whole window on a tablet.
+      width="full"
       refreshing={tablesQuery.isRefetching}
       onRefresh={refresh}
       scrollRef={scrollRef}
@@ -480,7 +485,7 @@ export function WaiterScreen() {
 
         {/* ---------------------------------------------------- tables */}
         <Text variant="h2">Tables</Text>
-        <View style={styles.tableGrid}>
+        <View style={styles.tableGrid} onLayout={tableGrid.onLayout}>
           {tables.map((table) => {
             const live = liveOrders.find((o) => o.tableId === table.id);
             const free = table.status === 'free';
@@ -508,6 +513,7 @@ export function WaiterScreen() {
                 }}
                 style={[
                   styles.tableCard,
+                  { width: tableGrid.itemWidth },
                   {
                     borderRadius: theme.radius.md,
                     borderColor: active
@@ -544,6 +550,7 @@ export function WaiterScreen() {
           <>
             <Text variant="h2">Drafts</Text>
             <View style={{ gap: 8 }}>
+              <Columns minItemWidth={320} gap={8}>
               {drafts.map((draft) => (
                 <Pressable
                   key={draft.id}
@@ -573,6 +580,7 @@ export function WaiterScreen() {
                   </Pressable>
                 </Pressable>
               ))}
+              </Columns>
             </View>
           </>
         )}
@@ -584,6 +592,7 @@ export function WaiterScreen() {
         </View>
 
         <View style={{ gap: 8 }}>
+          <Columns minItemWidth={300} gap={8}>
           {categories.map((category) => {
             const count = productsByCategory.get(category.id)?.length ?? 0;
             // Items already in the cart from this category, so the waiter can
@@ -622,6 +631,7 @@ export function WaiterScreen() {
               </Pressable>
             );
           })}
+          </Columns>
         </View>
         {categories.length === 0 && !categoriesQuery.isLoading && (
           <EmptyState title="No menu yet" description="The owner has not added any categories." />

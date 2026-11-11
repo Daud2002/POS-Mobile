@@ -15,6 +15,7 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Text } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/Toast';
+import { useGrid } from '@/hooks/useLayout';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { BarcodeScannerSheet } from '../components/BarcodeScannerSheet';
@@ -37,6 +38,10 @@ const COLUMNS = 2;
  */
 export function POSScreen() {
   const theme = useTheme();
+  // Product tiles: two across on a phone, as many as fit on a tablet. Measured
+  // off the header row, which is exactly as wide as the grid below it.
+  const productGrid = useGrid({ minItemWidth: 170, gap: theme.spacing.md, compactItemWidth: '47%' });
+  const columns = productGrid.columns ?? COLUMNS;
   const toast = useToast();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -109,7 +114,10 @@ export function POSScreen() {
           gap: theme.spacing.md,
         }}
       >
-        <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+        <View
+          style={{ flexDirection: 'row', gap: theme.spacing.sm }}
+          onLayout={productGrid.onLayout}
+        >
           <SearchInput
             containerStyle={{ flex: 1 }}
             value={catalog.search}
@@ -152,7 +160,10 @@ export function POSScreen() {
         <FlatList
           data={catalog.filtered}
           keyExtractor={(product) => product.id}
-          numColumns={COLUMNS}
+          // A FlatList cannot change its column count in place; a new key
+          // gives it a fresh layout when a tablet is turned.
+          key={columns}
+          numColumns={columns}
           columnWrapperStyle={{ gap: theme.spacing.md }}
           contentContainerStyle={{
             padding: theme.spacing.lg,
@@ -180,13 +191,25 @@ export function POSScreen() {
               icon={<PackageSearch size={28} color={theme.colors.mutedForeground} />}
             />
           }
-          renderItem={({ item }) => (
-            <ProductCard
-              product={item}
-              inCart={quantityInCart(item.id)}
-              onPress={handleAdd}
-            />
-          )}
+          renderItem={({ item }) =>
+            productGrid.columns ? (
+              // On a tablet a short last row keeps tile-sized tiles instead of
+              // one tile stretched across the window.
+              <View style={{ flex: 1, maxWidth: productGrid.itemWidth }}>
+                <ProductCard
+                  product={item}
+                  inCart={quantityInCart(item.id)}
+                  onPress={handleAdd}
+                />
+              </View>
+            ) : (
+              <ProductCard
+                product={item}
+                inCart={quantityInCart(item.id)}
+                onPress={handleAdd}
+              />
+            )
+          }
         />
       )}
 

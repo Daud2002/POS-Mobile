@@ -9,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { productsApi } from '@/api/services';
 import { Product } from '@/api/types';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -114,6 +115,8 @@ export function InventoryScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
       <View
         style={{
           paddingHorizontal: theme.spacing.lg,
@@ -251,6 +254,7 @@ export function InventoryScreen() {
           }}
         />
       )}
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

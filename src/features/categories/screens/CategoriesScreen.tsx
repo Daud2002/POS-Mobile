@@ -9,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { categoriesApi } from '@/api/services';
 import { Category, CategoryPayload } from '@/api/types';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -82,6 +83,8 @@ export function CategoriesScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.lg }}>
         <SectionHeader title="Categories" subtitle={`${categories.length} total`} />
       </View>
@@ -197,6 +200,7 @@ export function CategoriesScreen() {
         }}
         onDecline={() => setDeleting(null)}
       />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

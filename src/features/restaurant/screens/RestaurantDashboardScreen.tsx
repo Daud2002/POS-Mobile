@@ -18,7 +18,7 @@ import { reportsApi, restaurantApi } from '@/api/services';
 import type { ProfitPeriodKey } from '@/api/types';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { queryKeys } from '@/api/queryKeys';
-import { Screen } from '@/components/layout';
+import { Columns, Screen } from '@/components/layout';
 import { SectionCard, StatCard, StatRow, KeyValueRow } from '@/components/data';
 import { SubscriptionBanner } from '@/components/data/SubscriptionBanner';
 import { Text } from '@/components/ui';
@@ -27,8 +27,11 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { RealtimeEvents } from '@/lib/socket';
 import { can, canSeeShifts } from '@/lib/access';
 import { deviceTimeZone } from '@/lib/date';
+import { toNumber } from '@/lib/format';
 import { PROFIT_PERIODS, periodStart } from '@/lib/periods';
+import { recordsAnyTips, tipCells, tipPolicyOf } from '@/lib/tips';
 import { tint, useTheme } from '@/theme';
+import { TipsBreakdown } from '../components/TipsBreakdown';
 
 type Tone = 'positive' | 'negative' | 'neutral';
 
@@ -85,9 +88,17 @@ export function RestaurantDashboardScreen() {
   const report = reportQuery.data;
   const spend = profitQuery.data?.periods[period];
   const margin = report && report.revenue > 0 ? (report.profit / report.revenue) * 100 : 0;
+  /**
+   * Tips left on the period's orders. Shown once the store records tips at
+   * all, and for as long as the period holds any — never added into revenue.
+   */
+  const tipTotal = toNumber(report?.tipTotal);
+  const showTips = tipTotal > 0 || recordsAnyTips(tipPolicyOf(user));
 
   return (
-    <Screen scrollable refreshing={reportQuery.isRefetching} onRefresh={refresh}>
+    // A tablet gets the wider 'page' column: the figures and the breakdowns
+    // below sit side by side instead of in one long file.
+    <Screen scrollable refreshing={reportQuery.isRefetching} onRefresh={refresh} width="page">
       <View style={{ gap: 14 }}>
         <Text variant="h2">Dashboard</Text>
 
@@ -140,6 +151,19 @@ export function RestaurantDashboardScreen() {
             value={format(report?.revenue ?? 0)}
             icon={<DollarSign size={18} color={theme.colors.primary} />}
             loading={reportQuery.isLoading}
+            // Tips sit under revenue, never in it. The line opens to show
+            // them by order type and payment method.
+            footer={
+              showTips ? (
+                <TipsBreakdown
+                  total={tipTotal}
+                  cells={tipCells(report?.tipsBreakdown)}
+                  money={format}
+                  label="Tips"
+                  hint="Not included in revenue."
+                />
+              ) : undefined
+            }
           />
           <StatCard
             title="Cost of goods"
@@ -224,6 +248,8 @@ export function RestaurantDashboardScreen() {
           </View>
         )}
 
+        {/* Stacked on a phone; two (or three) across on a tablet. */}
+        <Columns minItemWidth={340} gap={14}>
         <SectionCard title="Top dishes">
           {report?.topProducts?.length ? (
             report.topProducts.map((p) => (
@@ -287,6 +313,7 @@ export function RestaurantDashboardScreen() {
             <Text variant="caption" color="mutedForeground">No data yet.</Text>
           )}
         </SectionCard>
+        </Columns>
       </View>
     </Screen>
   );

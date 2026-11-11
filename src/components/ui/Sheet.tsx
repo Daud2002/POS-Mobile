@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useLayout } from '@/hooks/useLayout';
+import { dialogWidthFor } from '@/lib/responsive';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { IconButton } from './IconButton';
@@ -29,7 +31,16 @@ export interface SheetProps {
   maxHeightRatio?: number;
   /** Disable when the body manages its own scrolling (e.g. a FlatList). */
   scrollable?: boolean;
+  /**
+   * How wide the dialog is on a TABLET: 'md' for a form or a picker, 'lg' for
+   * a sheet that holds a grid (a menu to pick dishes from). A phone ignores
+   * it — the sheet is always the width of the screen.
+   */
+  size?: 'md' | 'lg';
 }
+
+/** Tablet dialog widths, in points. */
+const DIALOG_WIDTH = { md: 560, lg: 780 } as const;
 
 /**
  * Bottom sheet used for every form and picker — the mobile replacement for the
@@ -39,6 +50,10 @@ export interface SheetProps {
  * Built on RN's Modal rather than a gesture-driven sheet because these are
  * text-entry forms, where predictable keyboard avoidance matters more than
  * drag-to-dismiss.
+ *
+ * On a tablet the same content is a centred dialog: a sheet pinned to the
+ * bottom edge and stretched across a 1,000-point window puts a form's fields
+ * a hand-span apart. Every caller gets this for free.
  */
 export function Sheet({
   open,
@@ -49,20 +64,23 @@ export function Sheet({
   footer,
   maxHeightRatio = 0.9,
   scrollable = true,
+  size = 'md',
 }: SheetProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
+  const { isTablet, width: windowWidth } = useLayout();
 
   return (
     <Modal
       visible={open}
       transparent
-      animationType="slide"
+      // A dialog appears in place; a sheet rises from the edge it is pinned to.
+      animationType={isTablet ? 'fade' : 'slide'}
       statusBarTranslucent
       onRequestClose={onClose}
     >
-      <View style={styles.root}>
+      <View style={[styles.root, isTablet ? styles.rootDialog : null]}>
         {/* Tapping the scrim dismisses; the sheet itself sits below it. */}
         <Pressable
           style={[styles.backdrop, { backgroundColor: theme.colors.overlay }]}
@@ -72,7 +90,7 @@ export function Sheet({
 
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboardView}
+          style={[styles.keyboardView, isTablet ? styles.keyboardViewDialog : null]}
         >
           <View
             style={[
@@ -85,9 +103,23 @@ export function Sheet({
                 maxHeight: height * maxHeightRatio,
                 paddingBottom: insets.bottom + theme.spacing.lg,
               },
+              isTablet
+                ? {
+                    width: dialogWidthFor(windowWidth, DIALOG_WIDTH[size]),
+                    borderRadius: theme.radius['2xl'],
+                    // Clear of the status bar and the home indicator, with
+                    // the scrim showing above and below.
+                    maxHeight: (height - insets.top - insets.bottom) * Math.min(maxHeightRatio, 0.88),
+                    paddingTop: theme.spacing.xl,
+                    paddingBottom: theme.spacing.lg,
+                  }
+                : null,
             ]}
           >
-            <View style={[styles.grabber, { backgroundColor: theme.colors.border }]} />
+            {/* The grabber says "pull me down"; a dialog has nothing to pull. */}
+            {isTablet ? null : (
+              <View style={[styles.grabber, { backgroundColor: theme.colors.border }]} />
+            )}
 
             <View
               style={[
@@ -165,8 +197,10 @@ export function Sheet({
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
+  rootDialog: { justifyContent: 'center', alignItems: 'center' },
   backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   keyboardView: { justifyContent: 'flex-end' },
+  keyboardViewDialog: { justifyContent: 'center', alignItems: 'center' },
   sheet: { width: '100%' },
   grabber: {
     width: 40,

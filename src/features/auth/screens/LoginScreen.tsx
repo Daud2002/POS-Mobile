@@ -20,6 +20,8 @@ import { Text } from '@/components/ui/Text';
 import { serverLabel } from '@/lib/connection/qr';
 import { useConnection } from '@/lib/connection/useConnection';
 import { openWhatsApp } from '@/lib/contact';
+import { useLayout } from '@/hooks/useLayout';
+import { CONTENT_WIDTH } from '@/lib/responsive';
 import { useTheme } from '@/theme/ThemeProvider';
 
 import { BrandHeader } from '../components/BrandHeader';
@@ -36,6 +38,7 @@ import { BrandHeader } from '../components/BrandHeader';
  */
 export function LoginScreen() {
   const theme = useTheme();
+  const { isTablet } = useLayout();
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { login } = useAuth();
   const { mode, baseUrl, registered } = useConnection();
@@ -93,6 +96,10 @@ export function LoginScreen() {
             style={{
               marginHorizontal: theme.spacing.lg,
               marginTop: -theme.spacing['2xl'],
+              // Two fields do not need a tablet's full width: a centred card.
+              ...(isTablet
+                ? { width: '100%', maxWidth: CONTENT_WIDTH.form - 80, alignSelf: 'center', marginHorizontal: 0 }
+                : null),
             }}
           >
             <View style={{ gap: theme.spacing.lg }}>

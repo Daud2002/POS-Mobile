@@ -151,6 +151,10 @@ export function CashiersScreen() {
                 <KeyValueRow label="Cash" value={format(toNumber(row.cashSales))} />
                 <KeyValueRow label="Card" value={format(toNumber(row.cardSales))} />
                 <KeyValueRow label="Online" value={format(toNumber(row.onlineSales))} />
+                {/* Beside the sales, never in them: the total above is bills only. */}
+                {toNumber(row.tipTotal) > 0 && (
+                  <KeyValueRow label="Tips" value={format(toNumber(row.tipTotal))} />
+                )}
                 <KeyValueRow label="Expected in drawer" value={format(toNumber(row.expectedCash))} />
                 <KeyValueRow label="Counted" value={format(toNumber(row.countedCash))} />
 

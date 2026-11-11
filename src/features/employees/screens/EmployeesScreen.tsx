@@ -9,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { employeesApi } from '@/api/services';
 import { Employee, EmployeePayload } from '@/api/types';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -96,6 +97,8 @@ export function EmployeesScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.lg }}>
         <SectionHeader title="Employees" subtitle={`${employees.length} on staff`} />
       </View>
@@ -237,6 +240,7 @@ export function EmployeesScreen() {
         }}
         onDecline={() => setDeleting(null)}
       />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

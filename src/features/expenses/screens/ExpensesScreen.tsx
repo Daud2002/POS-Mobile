@@ -15,6 +15,7 @@ import { effectiveRoleOf } from '@/lib/roles';
 import { StatCard } from '@/components/data/StatCard';
 import { StatRow } from '@/components/data/StatRow';
 import { PageFade } from '@/components/layout/PageFade';
+import { ContentColumn } from '@/components/layout/ContentColumn';
 import { SectionHeader } from '@/components/layout/SectionHeader';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -207,6 +208,8 @@ export function ExpensesScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >
       <PageFade>
+      {/* A centred column on a tablet; nothing on a phone. */}
+      <ContentColumn>
         <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.lg }}>
           <SectionHeader
             title="Expenses"
@@ -474,6 +477,7 @@ export function ExpensesScreen() {
           }}
           onDecline={() => setDeleting(null)}
         />
+      </ContentColumn>
       </PageFade>
     </SafeAreaView>
   );

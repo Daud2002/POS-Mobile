@@ -62,6 +62,18 @@ export interface PaymentSplit {
 }
 
 /**
+ * One line of a tips breakdown as the server sends it: the tips of one order
+ * type by one payment method (dine-out is counted as dine-in), so nine lines
+ * at most. Read it through `tipCells()` in lib/tips, which drops anything
+ * malformed.
+ */
+export interface TipBreakdownCell {
+  orderType: 'dine_in' | 'takeaway' | 'delivery';
+  method: 'cash' | 'card' | 'online';
+  amount: number;
+}
+
+/**
  * Restaurant lifecycle, deliberately a separate union from OrderStatus.
  *
  * Widening OrderStatus would break `Record<OrderStatus, StatusTone>` in
@@ -179,6 +191,14 @@ export interface RestaurantOrder {
   paidOnline?: Decimal;
   /** The split, already as numbers, when `paymentMethod` is 'partial'. */
   paymentSplit?: PaymentSplit | null;
+  /**
+   * A tip left when the order was paid: beside `total`, never part of it or
+   * of revenue. "0.00" when there is none; absent from a server that predates
+   * tips.
+   */
+  tipAmount?: Decimal;
+  /** The method the tip arrived by. Null when there is no tip. */
+  tipMethod?: 'cash' | 'card' | 'online' | null;
   notes?: string | null;
   version: number;
   createdAt: string;
@@ -285,6 +305,13 @@ export interface RestaurantSalesReport {
   /** Who COLLECTED the money, as opposed to who took the order. */
   byCashier: { name: string; orders: number; revenue: number }[];
   byOrderType: { orderType: string; orders: number; revenue: number }[];
+  /**
+   * Tips left on the window's orders. Beside `revenue`, never inside it.
+   * Absent from a server that predates tips.
+   */
+  tipTotal?: number;
+  /** The same tips by order type and payment method. */
+  tipsBreakdown?: TipBreakdownCell[];
 }
 
 export type ItemSalesGrouping = 'none' | 'day' | 'month';
@@ -344,7 +371,14 @@ export type Decimal = number | string;
 
 export type CashierShiftStatus = 'open' | 'closed' | 'collected';
 
-/** Money taken during a shift, split the way an owner counts it. */
+/**
+ * Money taken during a shift, split the way an owner counts it.
+ *
+ * The `*Sales` figures are bills only. Tips sit beside them and are never
+ * added in — `totalReceived` is the one figure that holds both. Every tip
+ * field is optional: a server that predates tips sends none of them, and
+ * lib/shiftMaths fills them in so such a shift reads as it always did.
+ */
 export interface ShiftTotals {
   cashSales: number;
   cardSales: number;
@@ -353,7 +387,28 @@ export interface ShiftTotals {
   totalSales: number;
   orderCount: number;
   cashPaidOut: number;
-  /** openingFloat + cashSales − cashPaidOut. Only cash touches the drawer. */
+  /** Tips by the method they arrived by. */
+  cashTips?: number;
+  cardTips?: number;
+  onlineTips?: number;
+  tipTotal?: number;
+  /** The same tips by order type and method — the "Tips" dropdown. */
+  tipsBreakdown?: TipBreakdownCell[];
+  /** totalSales + tipTotal: everything the cashier took. */
+  totalReceived?: number;
+  /** cashSales + cashTips. */
+  cashReceived?: number;
+  /** What the drawer holds before tips are taken out. */
+  cashInDrawer?: number;
+  /** Card/online tips the store pays out of this drawer; 0 when it does not. */
+  tipsFromDrawer?: number;
+  /** Card/online tips the drawer could not cover. Almost always 0. */
+  tipsOwed?: number;
+  /**
+   * The cash to hand over, tips already out. On a shift without tips that is
+   * openingFloat + cashSales − cashPaidOut, as it always was. Only cash
+   * touches the drawer.
+   */
   expectedCash: number;
 }
 
@@ -376,6 +431,18 @@ export interface CashierShift {
   totalSales?: number | null;
   orderCount?: number | null;
   cashPaidOut?: number | null;
+  /**
+   * Tips, frozen at close with the rest. Absent from a server that predates
+   * tips; null while the shift is still open.
+   */
+  cashTips?: number | null;
+  cardTips?: number | null;
+  onlineTips?: number | null;
+  /** Card/online tips this drawer paid out, as the store's setting stood at close. */
+  tipsFromDrawer?: number | null;
+  /** The tips by order type and method. NB: `tipBreakdown` here, `tipsBreakdown` in `totals`. */
+  tipBreakdown?: TipBreakdownCell[] | null;
+  /** The cash to hand over, tips already out. */
   expectedCash?: number | null;
   /** Null after an owner force-close — nobody counted the drawer. */
   countedCash?: number | null;
@@ -398,8 +465,12 @@ export interface CashierDashboard {
     card: number;
     online: number;
     other: number;
+    /** Bills only. Tips are reported beside it, never inside it. */
     total: number;
     orderCount: number;
+    /** Tips this cashier took in the window. Absent from a server that predates tips. */
+    tips?: number;
+    tipsBreakdown?: TipBreakdownCell[];
   };
   currentShift: CashierShift | null;
   recentShifts: CashierShift[];
@@ -418,6 +489,11 @@ export interface CashierSummaryRow {
   otherSales: number;
   totalSales: number;
   cashPaidOut: number;
+  /** Tips across the cashier's shifts. Beside `totalSales`, never inside it. */
+  cashTips?: number;
+  cardTips?: number;
+  onlineTips?: number;
+  tipTotal?: number;
   expectedCash: number;
   countedCash: number;
   difference: number;
@@ -454,6 +530,17 @@ export interface AppUser {
   storeName?: string;
   logoUrl?: string | null;
   shiftsEnabled?: boolean;
+  /**
+   * The owner's tip switches, set on the web app — this app only reads them.
+   * With a method's flag on, the till asks how much was received when a bill
+   * is paid that way and records the excess as a tip (lib/tips.ts). Absent
+   * from a server that predates tips: no tip box.
+   */
+  tipsCashEnabled?: boolean;
+  tipsCardEnabled?: boolean;
+  tipsOnlineEnabled?: boolean;
+  /** Card/online tips are paid to staff out of the cash drawer. */
+  tipsPaidFromCash?: boolean;
   /** Employee job title. Only meaningful for restaurant tenants. */
   designation?: string;
   printerName?: string;
@@ -505,6 +592,12 @@ export interface Store {
   logoUrl?: string | null;
   /** Restaurant tenants only: cashiers must open a shift before settling. */
   shiftsEnabled?: boolean;
+  /** Restaurant tenants only: record tips on payments by this method. */
+  tipsCashEnabled?: boolean;
+  tipsCardEnabled?: boolean;
+  tipsOnlineEnabled?: boolean;
+  /** Card/online tips are paid to staff out of the cash drawer. */
+  tipsPaidFromCash?: boolean;
   createdAt: string;
   updatedAt: string;
 }

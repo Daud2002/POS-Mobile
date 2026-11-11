@@ -13,7 +13,7 @@ import { Printer, ChefHat, BellRing } from 'lucide-react-native';
 
 import { restaurantApi } from '@/api/services';
 import { queryKeys } from '@/api/queryKeys';
-import { Screen } from '@/components/layout';
+import { Columns, Screen } from '@/components/layout';
 import { Button, EmptyState, Text, useToast } from '@/components/ui';
 import { useRealtime } from '@/hooks/useRealtime';
 import { getSocket, RealtimeEvents } from '@/lib/socket';
@@ -331,7 +331,9 @@ export function KitchenScreen() {
   };
 
   return (
-    <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh}>
+    // The whole window on a tablet: the kitchen display is a board, and more
+    // tickets on screen at once is the point of a bigger one.
+    <Screen scrollable refreshing={ordersQuery.isRefetching} onRefresh={refresh} width="full">
       <View style={{ gap: 12 }}>
         <ConnectionBanner connected={connected} />
 
@@ -353,7 +355,9 @@ export function KitchenScreen() {
             description="New tickets appear here automatically."
           />
         ) : (
-          orders.map((order) => {
+          // One ticket under another on a phone; side by side on a tablet.
+          <Columns minItemWidth={300} gap={12}>
+          {orders.map((order) => {
             const changed = changes[order.id];
             const addedIds = new Set(changed?.addedIds ?? []);
             const removed = changed?.removed ?? [];
@@ -483,7 +487,8 @@ export function KitchenScreen() {
                 </View>
               </FlashCard>
             );
-          })
+          })}
+          </Columns>
         )}
 
         {!hasPrinter && (

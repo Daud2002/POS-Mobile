@@ -101,6 +101,7 @@ export function ShiftBar({ onShiftChange }: { onShiftChange?: (shift: CashierShi
   }
 
   const totals = shift.totals;
+  const tipTotal = toNumber(totals?.tipTotal);
 
   return (
     <>
@@ -119,10 +120,13 @@ export function ShiftBar({ onShiftChange }: { onShiftChange?: (shift: CashierShi
               : '—'}
           </Text>
           {/* Cash is called out separately: it is the only figure that has to
-              match what is physically in the drawer. */}
-          <Text variant="caption" color="mutedForeground" numberOfLines={1}>
+              match what is physically in the drawer. With tips the strip may
+              run onto a second line rather than lose them off the end. */}
+          <Text variant="caption" color="mutedForeground" numberOfLines={tipTotal > 0 ? 2 : 1}>
             Cash {format(toNumber(totals?.cashSales))} · Total{' '}
             {format(toNumber(totals?.totalSales))} · {totals?.orderCount ?? 0} orders
+            {/* Tips are not in Total: that is sales. */}
+            {tipTotal > 0 ? ` · Tips ${format(tipTotal)}` : ''}
           </Text>
         </View>
         <Button size="sm" variant="outline" label="Close" onPress={() => setCloseSheet(true)} />
